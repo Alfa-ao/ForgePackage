@@ -4,7 +4,6 @@
 class ForgeJsonManager {
     [string]$FilePath
     [PSCustomObject]$Data
-
     static [string[]]$ArrayProps = @(
         'first', 'others', 'last', 'unpack',
         'packages', 'authors', 'keywords', 'useCommonScripts'
@@ -53,77 +52,21 @@ class ForgeJsonManager {
         )
     }
 
-    [void]UpdateFromRemote([PSCustomObject]$remoteForge, [string]$newVersion, [string]$tag, [string]$packageRelativePath) {
+    # Обновление только секции require
+    [void]UpdateRequire([string]$tag, [string]$version) {
         if (-not $this.Data) {
             $this.Data = [PSCustomObject]@{}
         }
         if (-not $this.Data.require) {
             $this.Data | Add-Member -NotePropertyName "require" -NotePropertyValue ([PSCustomObject]@{}) -Force
         }
-        $this.Data.require | Add-Member -NotePropertyName $tag -NotePropertyValue $newVersion -Force
-        
-        if (-not $this.Data.files) {
-            $this.Data | Add-Member -NotePropertyName "files" -NotePropertyValue ([PSCustomObject]@{}) -Force
-        }
-
-        $prefix = "$packageRelativePath/"
-
-        foreach ($section in @('first', 'others', 'last')) {
-            if ($remoteForge.files.$section) {
-                $existing = [ForgeJsonManager]::EnsureArray($this.Data.files.$section)
-                $incomingRaw = [ForgeJsonManager]::EnsureArray($remoteForge.files.$section)
-                
-                # Очищаем старые файлы этого пакета и собираем уникальные оставшиеся
-                $cleanedExisting = [System.Collections.ArrayList]::new()
-                $uniquePaths = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-                
-                foreach ($f in $existing) {
-                    if (-not [string]::IsNullOrWhiteSpace($f)) {
-                        # Оставляем только те файлы, которые не относятся к текущему обновляемому пакету
-                        if (-not ($f -like "$prefix*" -or $f -eq $packageRelativePath)) {
-                            if (-not $uniquePaths.Contains($f)) {
-                                [void]$cleanedExisting.Add($f)
-                                [void]$uniquePaths.Add($f)
-                            }
-                        }
-                    }
-                }
-
-                $newItems = [System.Collections.ArrayList]::new()
-                foreach ($f in $incomingRaw) {
-                    if (-not [string]::IsNullOrWhiteSpace($f)) {
-                        $fullPath = "$packageRelativePath/$f"
-                        # Добавляем только если файла еще нет в списке
-                        if (-not $uniquePaths.Contains($fullPath)) {
-                            [void]$newItems.Add($fullPath)
-                            [void]$uniquePaths.Add($fullPath)
-                        }
-                    }
-                }
-
-                # Новые файлы пакета добавляются в начало, далее очищенные существующие
-                $this.Data.files.$section = [array]($newItems.ToArray() + $cleanedExisting.ToArray())
-            }
-        }
+        $this.Data.require | Add-Member -NotePropertyName $tag -NotePropertyValue $version -Force
     }
 
-    [void]RemoveFromRemote([string]$tag, [string]$packageRelativePath) {
+    # Удаление только из секции require
+    [void]RemoveRequire([string]$tag) {
         if ($this.Data.require -and $this.Data.require.PSObject.Properties[$tag]) {
             $this.Data.require.PSObject.Properties.Remove($tag)
-        }
-        
-        $prefix = "$packageRelativePath/"
-        foreach ($section in @('first', 'others', 'last')) {
-            if ($this.Data.files -and $this.Data.files.$section) {
-                $current = [ForgeJsonManager]::EnsureArray($this.Data.files.$section)
-                $filtered = [System.Collections.ArrayList]::new()
-                foreach ($f in $current) {
-                    if (-not ($f -like "$prefix*" -or $f -eq $packageRelativePath)) {
-                        [void]$filtered.Add($f)
-                    }
-                }
-                $this.Data.files.$section = [array]$filtered.ToArray()
-            }
         }
     }
 
@@ -134,7 +77,6 @@ class ForgeJsonManager {
     [string]FormatJsonInternal($Object, [int]$IndentLevel) {
         $indent     = "    " * $IndentLevel
         $nextIndent = "    " * ($IndentLevel + 1)
-        
         if ($null -eq $Object) { return "null" }
         if ($Object -is [bool]) { return $Object.ToString().ToLower() }
         if ($Object -is [string]) {

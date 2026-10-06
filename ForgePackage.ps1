@@ -4,11 +4,11 @@
 # Подключение модулей
 . "$PSScriptRoot\Functions\UIHelpers.ps1"
 . "$PSScriptRoot\Functions\BackupHelpers.ps1"
-. "$PSScriptRoot\Functions\PackageActions.ps1"
 . "$PSScriptRoot\Classes\ForgeContext.ps1"
-. "$PSScriptRoot\Classes\XdbManager.ps1"
 . "$PSScriptRoot\Classes\ForgeJsonManager.ps1"
 . "$PSScriptRoot\Classes\PackageDownloader.ps1"
+. "$PSScriptRoot\Classes\XdbManager.ps1"
+. "$PSScriptRoot\Functions\PackageActions.ps1"
 
 [Console]::BackgroundColor = [System.ConsoleColor]::Black
 [Console]::ForegroundColor = [System.ConsoleColor]::White
