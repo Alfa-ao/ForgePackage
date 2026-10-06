@@ -1,7 +1,6 @@
 ﻿# =============================================
 # Classes/ForgeContext.ps1
 # =============================================
-
 class ForgeContext {
     [string]$GameInstallPath
     [string]$AddonsPath
@@ -10,6 +9,15 @@ class ForgeContext {
     [string]$PackagesDir
     [string]$PackagesJsonPath
     [string]$XdbPath
+
+    static [hashtable]$CommonScriptsPriority = @{
+        "/Mods/SampleCommon/CoreScripts/ClassesImplementation.lua" = 100
+        "/Mods/SampleCommon/SampleAddonBase.lua" = 99
+        "/Mods/SampleCommon/CoreScripts/AddonBaseUserMods.lua" = 98
+        "/Mods/SampleCommon/CoreScripts/AddonBase.lua" = 97
+        "/Mods/SampleCommon/CoreScripts/WidgetCoreUserMods.lua" = 96
+        "/Mods/SampleCommon/CoreScripts/AdvancedHandlersUserMods.lua" = 95
+    }
 
     ForgeContext([string]$gamePath, [System.IO.DirectoryInfo]$addon) {
         $this.GameInstallPath = $gamePath

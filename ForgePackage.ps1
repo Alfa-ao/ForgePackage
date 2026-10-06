@@ -19,10 +19,10 @@ $ForgeVersion     = "1.0.0"
 $scriptName       = "ForgePackage"
 $scriptDir        = $PSScriptRoot
 if (-not $scriptDir) { $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition }
-$scriptFileName   = $MyInvocation.MyCommand.Name
+$scriptFileName = $MyInvocation.MyCommand.Name
 if (-not $scriptFileName) { $scriptFileName = "$scriptName.ps1" }
-$scriptPath       = Join-Path -Path $scriptDir -ChildPath $scriptFileName
-$scriptExt        = [System.IO.Path]::GetExtension($scriptPath)
+$scriptPath = Join-Path -Path $scriptDir -ChildPath $scriptFileName
+$scriptExt = [System.IO.Path]::GetExtension($scriptPath)
 if ([string]::IsNullOrEmpty($scriptExt)) { $scriptExt = ".ps1" }
 
 Write-Host "$scriptName v$ForgeVersion" -ForegroundColor Green
@@ -75,7 +75,8 @@ try {
     Write-Host "Directory Allods Online: $installLocation" -ForegroundColor DarkGray
 } catch {
     Write-Host "Ошибка: Директория игры не найдена." -ForegroundColor Red
-    Read-Host "Нажмите Enter для выхода"; exit
+    Read-Host "Нажмите Enter для выхода";
+    Stop-Process -Id $PID -Force
 }
 
 
@@ -99,62 +100,53 @@ while ($true)
 if ($workMode -eq '2') {
     Write-Host "Выберите папку..." -ForegroundColor Yellow
     $selectedPath = Get-SelectedFolder
-    
     if (-not [string]::IsNullOrEmpty($selectedPath)) {
         $selectedAddon = [System.IO.DirectoryInfo]::new($selectedPath)
         Write-Host "Выбрана папка: $($selectedAddon.FullName)" -ForegroundColor Green
         Write-Host ""
-
         $forgeJsonPath = Join-Path $selectedPath "forge.json"
 
-        # Проверка на существование forge.json
         if (Test-Path $forgeJsonPath) {
             Write-Log "Info" "Файл forge.json уже существует в выбранной папке." "DarkYellow" "Yellow"
             Read-Host "Нажмите Enter для выхода"
-            exit
+            Stop-Process -Id $PID -Force
         }
 
-        # Сканирование *.lua файлов
         Write-Host "Сканирование *.lua файлов..." -ForegroundColor DarkYellow
         $luaFiles = @()
         $foundFiles = Get-ChildItem -Path $selectedPath -Filter "*.lua" -Recurse -File -ErrorAction SilentlyContinue
-        
         if ($foundFiles) {
             $luaFiles = $foundFiles | ForEach-Object {
                 $relativePath = $_.FullName.Substring($selectedPath.Length).TrimStart('\', '/')
                 $relativePath -replace '\\', '/'
             }
         }
-        
-        
         $luaFiles = [array]$luaFiles
 
-        # Формирование структуры forge.json
+        $filesDict = [ordered]@{}
+        foreach ($file in $luaFiles) {
+            $filesDict[$file] = 20
+        }
+
         $forgeData = [ordered]@{
             name    = $selectedAddon.Name
             type    = "Library"
             execute = [ordered]@{
                 unpack = $luaFiles
             }
-            files   = [ordered]@{
-                others = $luaFiles
-            }
+            files   = $filesDict
         }
 
-        # Сохранение JSON
         Write-Host "Сохранение forge.json..." -ForegroundColor Gray
         $mgr = [ForgeJsonManager]::new($forgeJsonPath)
         $mgr.Data = [PSCustomObject]$forgeData
         $mgr.Save()
-
         Write-Host "Файл forge.json успешно создан для библиотеки '$($selectedAddon.Name)'." -ForegroundColor Green
-        Read-Host "Нажмите Enter для выхода"
-        exit
     } else {
         Write-Host "Выбор папки отменен." -ForegroundColor Red
-        Read-Host "Нажмите Enter для выхода"
-        exit
     }
+    Read-Host "Нажмите Enter для выхода"
+    Stop-Process -Id $PID -Force
 }
 
 
@@ -193,7 +185,6 @@ while ($true) {
 $selectedAddon = $addons[[int]$selection - 1]
 Write-Host "Выбран аддон: $($selectedAddon.Name)" -ForegroundColor Green
 
-# Создает контекст
 $context = [ForgeContext]::new($installLocation, $selectedAddon)
 
 # --- Создание forge.json, если его нет ---
@@ -203,64 +194,59 @@ if (-not (Test-Path $context.ForgeJsonPath)) {
         Write-WarningBlock -Text "Create: Инициализация создания forge.json..."
         $forgeData = [ordered]@{}
         
-        # 1. Name
-        Write-Host "  [1/7] Определение 'name'..." -ForegroundColor Gray
+        # Name
+        Write-Host "  [1/8] Определение 'name'..." -ForegroundColor Gray
         $forgeData["name"] = $selectedAddon.Name
         Write-Host "    -> Установлено: $($selectedAddon.Name)" -ForegroundColor Green
         
-        # 2. Description
-        Write-Host "  [2/7] Определение 'description'..." -ForegroundColor Gray
+        # Description
+        Write-Host "  [2/8] Определение 'description'..." -ForegroundColor Gray
         $forgeData["description"] = ""
         Write-Host "    -> Установлено: (пусто)" -ForegroundColor Green
         
-        # 3. Type (Стандартно Addon)
-        Write-Host "  [3/7] Определение 'type'..." -ForegroundColor Gray
+        # Определение type
+        Write-Host "  [3/8] Определение 'type'..." -ForegroundColor Gray
         $forgeData["type"] = "Addon"
         Write-Host "    -> Установлено: Addon" -ForegroundColor Green
-        
-        # 3.5 Version (только для Addon)
-        if ($forgeData["type"] -eq "Addon") {
-            Write-Host "  [3.5] Определение 'version'..." -ForegroundColor Gray
-            $addonVersion = $null
-            $xmlPath = $context.XdbPath
-            
-            if (Test-Path $xmlPath) {
-                try {
-                    [xml]$xmlContent = Get-Content $xmlPath -Encoding UTF8
-                    if ($xmlContent.UIAddon.userAddonInfo.version) {
-                        $rawVersion = $xmlContent.UIAddon.userAddonInfo.version
-                        $numVersion = 0.0
-                        if ([double]::TryParse($rawVersion, [ref]$numVersion)) {
-                            if ($numVersion -gt 0) { $addonVersion = $rawVersion }
-                        } else {
-                            if (-not [string]::IsNullOrWhiteSpace($rawVersion) -and $rawVersion -ne "0") {
-                                $addonVersion = $rawVersion
-                            }
+
+        # Определение version
+        Write-Host "  [4/8] Определение 'version'..." -ForegroundColor Gray
+        $addonVersion = $null
+        $xmlPath = $context.XdbPath
+        if (Test-Path $xmlPath) {
+            try {
+                [xml]$xmlContent = Get-Content $xmlPath -Encoding UTF8
+                if ($xmlContent.UIAddon.userAddonInfo.version) {
+                    $rawVersion = $xmlContent.UIAddon.userAddonInfo.version
+                    $numVersion = 0.0
+                    if ([double]::TryParse($rawVersion, [ref]$numVersion)) {
+                        if ($numVersion -gt 0) { $addonVersion = $rawVersion }
+                    } else {
+                        if (-not [string]::IsNullOrWhiteSpace($rawVersion) -and $rawVersion -ne "0") {
+                            $addonVersion = $rawVersion
                         }
-                        if ($addonVersion) { Write-Host "    -> Версия найдена в UIAddon: $addonVersion" -ForegroundColor DarkGray }
                     }
-                } catch { Write-Host "    -> Ошибка чтения UIAddon." -ForegroundColor Yellow }
-            }
-            
-            if ([string]::IsNullOrWhiteSpace($addonVersion)) {
-                Write-Host "    -> Версия не найдена, пуста или <= 0 в UIAddon." -ForegroundColor Yellow
-                $addonVersion = Read-Host "    Введите версию аддона (например: 1.0.0)"
-                if ([string]::IsNullOrWhiteSpace($addonVersion)) { $addonVersion = "1.0.0" }
-            }
-            $forgeData["version"] = $addonVersion
-            Write-Host "    -> Установлено: $addonVersion" -ForegroundColor Green
+                    if ($addonVersion) { Write-Host "    -> Версия найдена в UIAddon: $addonVersion" -ForegroundColor DarkGray }
+                }
+            } catch { Write-Host "    -> Ошибка чтения UIAddon." -ForegroundColor Yellow }
         }
-        
-        # 4. License
-        Write-Host "  [4/7] Определение 'license'..." -ForegroundColor Gray
+        if ([string]::IsNullOrWhiteSpace($addonVersion)) {
+            Write-Host "    -> Версия не найдена, пуста или <= 0 в UIAddon." -ForegroundColor Yellow
+            $addonVersion = Read-Host "    Введите версию аддона"
+            if ([string]::IsNullOrWhiteSpace($addonVersion)) { $addonVersion = "1.0.0" }
+        }
+        $forgeData["version"] = $addonVersion
+        Write-Host "    -> Установлено: $addonVersion" -ForegroundColor Green
+
+        # Определение license
+        Write-Host "  [5/8] Определение 'license'..." -ForegroundColor Gray
         $forgeData["license"] = "MIT"
         Write-Host "    -> Установлено: MIT" -ForegroundColor Green
-        
-        # 5. Authors
-        Write-Host "  [5/7] Определение 'authors'..." -ForegroundColor Gray
+
+        # Определение authors
+        Write-Host "  [6/8] Определение 'authors'..." -ForegroundColor Gray
         $authorName = $null
         $xmlContent = $null
-        
         if (Test-Path $context.XdbPath) {
             try {
                 [xml]$xmlContent = Get-Content $context.XdbPath -Encoding UTF8
@@ -270,39 +256,34 @@ if (-not (Test-Path $context.ForgeJsonPath)) {
                 }
             } catch { Write-Host "    -> Ошибка чтения UIAddon." -ForegroundColor Yellow }
         }
-        
         if ([string]::IsNullOrWhiteSpace($authorName)) {
             Write-Host "    -> Автор не найден в UIAddon." -ForegroundColor Yellow
             $authorName = Read-Host "    Введите имя автора"
             if ([string]::IsNullOrWhiteSpace($authorName)) { $authorName = "Unknown" }
         }
-        
         $forgeData.authors = @(@{ name = $authorName })
         Write-Host "    -> Добавлен автор: $authorName" -ForegroundColor Green
-        
-        # 6. Require
-        Write-Host "  [6/7] Определение 'require'..." -ForegroundColor Gray
+
+        # Определение require
+        Write-Host "  [7/8] Определение 'require'..." -ForegroundColor Gray
         $forgeData["require"] = [ordered]@{}
-        
-        # 6.1 API Version
-        Write-Host "    [6.1] Определение 'api'..." -ForegroundColor DarkGray
+
+        # Определение api
+        Write-Host "    Определение 'api'..." -ForegroundColor DarkGray
         $apiVersion = $null
         $gameVersionFile = Join-Path $installLocation "Profiles\game.version"
-        
         if (Test-Path $gameVersionFile) {
             try {
                 $stream = [System.IO.File]::OpenRead($gameVersionFile)
                 $stream.Seek(8, [System.IO.SeekOrigin]::Begin) | Out-Null
                 $length = $stream.ReadByte()
                 $stream.Close()
-                
                 if ($length -gt 0) {
                     $stream = [System.IO.File]::OpenRead($gameVersionFile)
                     $stream.Seek(12, [System.IO.SeekOrigin]::Begin) | Out-Null
                     $buffer = New-Object byte[] $length
                     $bytesRead = $stream.Read($buffer, 0, $length)
                     $stream.Close()
-                    
                     if ($bytesRead -eq $length) {
                         $apiVersion = [System.Text.Encoding]::ASCII.GetString($buffer)
                         Write-Host "      -> Версия API найдена: $apiVersion" -ForegroundColor DarkGray
@@ -310,7 +291,6 @@ if (-not (Test-Path $context.ForgeJsonPath)) {
                 }
             } catch { Write-Host "      -> Ошибка чтения game.version." -ForegroundColor Yellow }
         }
-        
         if ([string]::IsNullOrWhiteSpace($apiVersion)) {
             Write-Host "      -> Версия API не найдена." -ForegroundColor Yellow
             $apiVersion = Read-Host "      Введите версию API"
@@ -318,93 +298,29 @@ if (-not (Test-Path $context.ForgeJsonPath)) {
         }
         $forgeData["require"]["api"] = $apiVersion
         Write-Host "      -> Установлена версия API: $apiVersion" -ForegroundColor Green
-        
-        # 6.2 useCommonScripts
-        Write-Host "    [6.2] Определение 'useCommonScripts'..." -ForegroundColor DarkGray
-        $useCommonScriptsVal = $null
-        $xmlUseCommon = $false
-        
+
+        # Определение useCommonScripts
+        Write-Host "    Определение 'useCommonScripts'..." -ForegroundColor DarkGray
+        $useCommonScriptsVal = $false
         if ($xmlContent -and $xmlContent.UIAddon.userAddonInfo.useCommonScripts -eq 'true') {
-            $xmlUseCommon = $true
-        } else {
-            $scriptRefs = [System.Collections.ArrayList]::new()
-            if ($xmlContent -and $xmlContent.UIAddon.ScriptFileRefs.Item) {
-                $xmlItems = $xmlContent.UIAddon.ScriptFileRefs.Item
-                # [FIX] [array] — защита от схлопывания при 1 Item
-                if ($xmlItems -isnot [array]) { $xmlItems = [array]$xmlItems }
-                foreach ($item in $xmlItems) {
-                    [void]$scriptRefs.Add($item.href)
-                }
-            }
-            
-            $orderedCommonScripts = @(
-                "/Mods/SampleCommon/CoreScripts/ClassesImplementation.lua",
-                "/Mods/SampleCommon/SampleAddonBase.lua",
-                "/Mods/SampleCommon/CoreScripts/AddonBaseUserMods.lua",
-                "/Mods/SampleCommon/CoreScripts/AddonBase.lua",
-                "/Mods/SampleCommon/CoreScripts/WidgetCoreUserMods.lua",
-                "/Mods/SampleCommon/CoreScripts/AdvancedHandlersUserMods.lua"
-            )
-            
-            $foundScripts = [System.Collections.ArrayList]::new()
-            $foundDeprecated = $false
-            
-            foreach ($ref in $scriptRefs) {
-                $normRef = $ref.Replace("\", "/")
-                if ($normRef -match "^/Mods/SampleCommon") {
-                    if ($normRef -eq "/Mods/SampleCommon/SampleAddonBase.lua") { $foundDeprecated = $true }
-                    if ($orderedCommonScripts -contains $normRef) {
-                        [void]$foundScripts.Add($normRef)
-                    }
-                }
-            }
-            
-            $orderedFoundScripts = [System.Collections.ArrayList]::new()
-            foreach ($ordered in $orderedCommonScripts) {
-                if ($foundScripts -contains $ordered) {
-                    [void]$orderedFoundScripts.Add($ordered)
-                }
-            }
-        }
-        
-        if ($xmlUseCommon) {
             $useCommonScriptsVal = $true
-            Write-Host "      -> Найдено в UIAddon (useCommonScripts = true)" -ForegroundColor Green
-        } elseif ($orderedFoundScripts.Count -gt 0) {
-            $useCommonScriptsVal = [array]$orderedFoundScripts.ToArray()
-            foreach ($item in $orderedFoundScripts) {
-                Write-Host "      -> Add: " -ForegroundColor Green -NoNewline
-                Write-Host "- ${item}" -ForegroundColor Yellow
-            }
-            if ($foundDeprecated) {
-                Write-Host "      [!] "  -ForegroundColor Red -NoNewline
-                Write-Host "Warning: Обнаружена устаревшая логика (SampleAddonBase.lua)." -ForegroundColor Yellow
-                Write-Host "           Рекомендуется использовать:" -ForegroundColor Gray
-                Write-Host "             - CoreScripts/AddonBaseUserMods" -ForegroundColor DarkYellow
-                Write-Host "             - CoreScripts/AddonBase" -ForegroundColor DarkYellow
-            }
+            Write-Host "      -> Установлено: true. Пользовательское подключение SampleCommon игнорируется." -ForegroundColor Green
         } else {
-            Write-Host "      -> Пропущено." -ForegroundColor DarkGray
+            Write-Host "      -> Установлено: false." -ForegroundColor Yellow
         }
-        
-        if ($null -ne $useCommonScriptsVal) {
-            $forgeData["require"]["useCommonScripts"] = $useCommonScriptsVal
-        }
-        
-        # 6.3 Packages
-        Write-Host "    [6.3] Обработка локальных Packages..." -ForegroundColor DarkGray
+        $forgeData["require"]["useCommonScripts"] = $useCommonScriptsVal
+
+        # Обработка локальных Packages
+        Write-Host "    Обработка локальных Packages..." -ForegroundColor DarkGray
         if (Test-Path $context.PackagesJsonPath) {
             try {
                 $packagesJsonContent = Get-Content $context.PackagesJsonPath -Raw -Encoding UTF8 | ConvertFrom-Json
                 $currentPkgVersion = $packagesJsonContent.version
-                
                 if ($currentPkgVersion -eq $packages_version) {
                     $packagesList = $packagesJsonContent.packages
-                    # [FIX] [array] — защита от схлопывания при 1 пакете
                     if ($null -ne $packagesList -and $packagesList -isnot [array]) {
                         $packagesList = [array]$packagesList
                     }
-                    
                     if ($packagesList) {
                         foreach ($pkg in $packagesList) {
                             if (-not [string]::IsNullOrWhiteSpace($pkg.tag) -and
@@ -430,22 +346,37 @@ if (-not (Test-Path $context.ForgeJsonPath)) {
             Write-Host "      -> Файл packages.json не найден." -ForegroundColor DarkGray
         }
         
-        # 7. Files (others)
-        Write-Host "  [7/7] Определение 'files.others'..." -ForegroundColor Gray
-        $othersList = [System.Collections.ArrayList]::new()
-        foreach ($ref in $scriptRefs) {
-            $normRef = $ref.Replace("\", "/")
-            if ($normRef -notmatch "^(/Mods/SampleCommon|Packages/)") {
-                [void]$othersList.Add($normRef)
+        # ---BEGIN[8/8]---
+        Write-Host "  [8/8] Определение 'files'..." -ForegroundColor Gray
+        $scriptRefs = @()
+        if ($xmlContent -and $xmlContent.UIAddon.ScriptFileRefs) {
+            $items = $xmlContent.UIAddon.ScriptFileRefs.Item
+            if ($items) {
+                if ($items -isnot [array]) { $items = @($items) }
+                $scriptRefs = $items | ForEach-Object { $_.href }
             }
         }
-        $forgeData["files"] = [ordered]@{ others = $othersList }
-        foreach ($item in $othersList) {
-            Write-Host "    -> Add: " -ForegroundColor Green -NoNewline
-            Write-Host "- ${item}" -ForegroundColor Yellow
+
+        # сохранение исходной последовательности
+        $filesDict = [ordered]@{}
+        foreach ($ref in $scriptRefs) {
+            $normRef = $ref.Replace("\", "/")
+            if ($normRef -match "^Packages/") { continue }
+            
+            $priority = 10
+            if ([ForgeContext]::CommonScriptsPriority.ContainsKey($normRef)) {
+                $priority = [ForgeContext]::CommonScriptsPriority[$normRef]
+            }
+            $filesDict[$normRef] = $priority
         }
-        
-        Write-Host ""
+
+        $forgeData["files"] = $filesDict
+
+        foreach ($item in $filesDict.Keys) {
+            Write-Host "    -> Add file: " -ForegroundColor Green -NoNewline
+            Write-Host "$item [Priority: $($filesDict[$item])]" -ForegroundColor Yellow
+        }
+        # ---END[8/8]---
         
         # Сохранение
         Write-Host "Сохранение JSON..." -ForegroundColor Gray
@@ -455,8 +386,6 @@ if (-not (Test-Path $context.ForgeJsonPath)) {
         Write-Host "Файл forge.json успешно создан." -ForegroundColor Yellow
     }
     else {
-        #Write-Host "Действия были отменены." -ForegroundColor Yellow
-        #exit
         Stop-Process -Id $PID -Force
     }
 }
@@ -546,7 +475,7 @@ while($true)
     # --- Выполнение действий ---
     if ($actionToPerform) {
         Write-Host ""
-        Write-Host "Подготовка к изменению зависимостей..." -ForegroundColor Gray
+        Write-Host "Подготовка..." -ForegroundColor Gray
         Backup-XdbFile -AddonRoot $selectedAddon.FullName
 
         switch ($actionToPerform) {
@@ -578,10 +507,6 @@ while($true)
             }
         }
     } else {
-        #Write-Host "Действия были отменены2." -ForegroundColor Yellow
         Stop-Process -Id $PID -Force
     }
 }
-
-Write-Host ""
-Read-Host "Нажмите Enter для выхода"

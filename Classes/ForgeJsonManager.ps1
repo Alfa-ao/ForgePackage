@@ -5,8 +5,7 @@ class ForgeJsonManager {
     [string]$FilePath
     [PSCustomObject]$Data
     static [string[]]$ArrayProps = @(
-        'first', 'others', 'last', 'unpack',
-        'packages', 'authors', 'keywords', 'useCommonScripts'
+        'unpack', 'packages', 'authors', 'keywords'
     )
 
     ForgeJsonManager([string]$path) {
@@ -52,7 +51,6 @@ class ForgeJsonManager {
         )
     }
 
-    # Обновление только секции require
     [void]UpdateRequire([string]$tag, [string]$version) {
         if (-not $this.Data) {
             $this.Data = [PSCustomObject]@{}
@@ -63,7 +61,6 @@ class ForgeJsonManager {
         $this.Data.require | Add-Member -NotePropertyName $tag -NotePropertyValue $version -Force
     }
 
-    # Удаление только из секции require
     [void]RemoveRequire([string]$tag) {
         if ($this.Data.require -and $this.Data.require.PSObject.Properties[$tag]) {
             $this.Data.require.PSObject.Properties.Remove($tag)

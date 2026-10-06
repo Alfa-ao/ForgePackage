@@ -1,6 +1,7 @@
 ﻿# =============================================
 # Classes/XdbManager.ps1
 # =============================================
+
 function Get-PackagePrefix {
     param([PSCustomObject]$pkg)
     if (-not $pkg -or -not $pkg.tag) { return "" }
@@ -22,24 +23,6 @@ function Format-PackagePath {
     }
     $cleanPath = $normPath.TrimStart('/')
     return "$prefix/$cleanPath"
-}
-
-function Sort-ArrayWithPriority {
-    param([array]$Items)
-    if (-not $Items -or $Items.Count -eq 0) { return @() }
-    $priority = [System.Collections.ArrayList]::new()
-    $regular = [System.Collections.ArrayList]::new()
-    foreach ($item in $Items) {
-        if ($item -match "^/?Mods/SampleCommon") {
-            [void]$priority.Add($item)
-        } else {
-            [void]$regular.Add($item)
-        }
-    }
-    $result = [System.Collections.ArrayList]::new()
-    [void]$result.AddRange($priority)
-    [void]$result.AddRange($regular)
-    return @($result.ToArray())
 }
 
 class XdbManager {
@@ -71,42 +54,72 @@ class XdbManager {
 
     [void]ApplyForgeChanges([PSCustomObject]$forgeData, [PSCustomObject]$packagesData) {
         $this.Load()
-        $ScriptFileRefs = [System.Collections.ArrayList]::new()
-        $useCommonScripts = $forgeData.require.useCommonScripts
 
-        if ($null -ne $useCommonScripts) {
-            if (-not $this.XmlDoc.UIAddon.userAddonInfo) {
-                $node = $this.XmlDoc.CreateElement("userAddonInfo")
-                $this.XmlDoc.UIAddon.AppendChild($node) | Out-Null
-            }
-            if ($useCommonScripts -eq $true) {
-                $this.XmlDoc.UIAddon.userAddonInfo.useCommonScripts = "true"
-            } elseif ($useCommonScripts -is [array]) {
-                foreach ($item in $useCommonScripts) {
-                    if (-not [string]::IsNullOrWhiteSpace($item)) {
-                        [void]$ScriptFileRefs.Add($item)
+        $addonUseCommon = $forgeData.require.useCommonScripts
+        $effectiveUseCommon = $false
+        if ($addonUseCommon -eq $true) {
+            $effectiveUseCommon = $true
+        } else {
+            if ($packagesData -and $packagesData.packages) {
+                $pkgs = $packagesData.packages
+                if ($pkgs -isnot [array]) { $pkgs = [array]$pkgs }
+                foreach ($pkg in $pkgs) {
+                    if ($pkg.require -and $pkg.require.useCommonScripts -eq $true) {
+                        $effectiveUseCommon = $true
+                        break
                     }
                 }
             }
         }
 
-        $mainFirst = [System.Collections.ArrayList]::new()
-        $mainOthers = [System.Collections.ArrayList]::new()
-        $mainLast = [System.Collections.ArrayList]::new()
+        if (-not $this.XmlDoc.UIAddon.userAddonInfo) {
+            $node = $this.XmlDoc.CreateElement("userAddonInfo")
+            $this.XmlDoc.UIAddon.AppendChild($node) | Out-Null
+        }
+        $userAddonInfoNode = $this.XmlDoc.UIAddon.userAddonInfo
 
-        foreach ($f in [ForgeJsonManager]::EnsureArray($forgeData.files.first)) {
-            if (-not [string]::IsNullOrWhiteSpace($f)) { [void]$mainFirst.Add($f) }
+        $useCommonNode = $userAddonInfoNode.SelectSingleNode("useCommonScripts")
+        if (-not $useCommonNode) {
+            $useCommonNode = $this.XmlDoc.CreateElement("useCommonScripts")
+            $userAddonInfoNode.AppendChild($useCommonNode) | Out-Null
         }
-        foreach ($f in [ForgeJsonManager]::EnsureArray($forgeData.files.others)) {
-            if (-not [string]::IsNullOrWhiteSpace($f)) { [void]$mainOthers.Add($f) }
-        }
-        foreach ($f in [ForgeJsonManager]::EnsureArray($forgeData.files.last)) {
-            if (-not [string]::IsNullOrWhiteSpace($f)) { [void]$mainLast.Add($f) }
+        $useCommonNode.InnerText = $effectiveUseCommon.ToString().ToLower()
+
+        $addonVersion = $forgeData.version
+        if (-not [string]::IsNullOrWhiteSpace($addonVersion)) {
+            $versionNode = $userAddonInfoNode.SelectSingleNode("version")
+            if (-not $versionNode) {
+                $versionNode = $this.XmlDoc.CreateElement("version")
+                $userAddonInfoNode.AppendChild($versionNode) | Out-Null
+            }
+            $versionNode.InnerText = $addonVersion.ToString().Trim()
         }
 
-        $pkgFirst = [System.Collections.ArrayList]::new()
-        $pkgOthers = [System.Collections.ArrayList]::new()
-        $pkgLast = [System.Collections.ArrayList]::new()
+        # Сбор файлов с сохранением исходного порядка
+        $allFiles = [ordered]@{}
+
+        $addFiles = {
+            param($filesObj, $prefix)
+            if (-not $filesObj) { return }
+            
+            # filesObj представляет собой словарь { "путь": приоритет }
+            foreach ($prop in $filesObj.PSObject.Properties) {
+                $file = $prop.Name
+                $priority = $prop.Value
+                
+                $formatted = if ($prefix) { Format-PackagePath $file $prefix } else { $file }
+                if ([string]::IsNullOrWhiteSpace($formatted)) { continue }
+                
+                # Применение жестких приоритетов для стандартных скриптов
+                if ([ForgeContext]::CommonScriptsPriority.ContainsKey($formatted)) {
+                    $priority = [ForgeContext]::CommonScriptsPriority[$formatted]
+                }
+                
+                $allFiles[$formatted] = [int]$priority
+            }
+        }
+
+        & $addFiles $forgeData.files $null
 
         if ($packagesData -and $packagesData.packages) {
             $pkgs = $packagesData.packages
@@ -114,41 +127,32 @@ class XdbManager {
             foreach ($pkg in $pkgs) {
                 if ($pkg.files) {
                     $prefix = Get-PackagePrefix $pkg
-                    foreach ($f in [ForgeJsonManager]::EnsureArray($pkg.files.first)) {
-                        $formatted = Format-PackagePath $f $prefix
-                        if ($formatted) { [void]$pkgFirst.Add($formatted) }
-                    }
-                    foreach ($f in [ForgeJsonManager]::EnsureArray($pkg.files.others)) {
-                        $formatted = Format-PackagePath $f $prefix
-                        if ($formatted) { [void]$pkgOthers.Add($formatted) }
-                    }
-                    foreach ($f in [ForgeJsonManager]::EnsureArray($pkg.files.last)) {
-                        $formatted = Format-PackagePath $f $prefix
-                        if ($formatted) { [void]$pkgLast.Add($formatted) }
-                    }
+                    & $addFiles $pkg.files $prefix
                 }
             }
         }
 
-        $mergeAndSort = {
-            param($mainList, $pkgList)
-            $sortedMain = @(Sort-ArrayWithPriority $mainList)
-            $sortedPkg = @(Sort-ArrayWithPriority $pkgList)
-            $merged = [System.Collections.ArrayList]::new()
-            if ($sortedPkg.Count -gt 0) { [void]$merged.AddRange($sortedPkg) }
-            if ($sortedMain.Count -gt 0) { [void]$merged.AddRange($sortedMain) }
-            return @($merged.ToArray())
+        # Удаление стандартных скриптов при активном useCommonScripts
+        if ($effectiveUseCommon) {
+            $keysToRemove = @($allFiles.Keys | Where-Object { $_ -match "^/?Mods/SampleCommon" })
+            foreach ($key in $keysToRemove) {
+                $allFiles.Remove($key)
+            }
         }
 
-        $finalFirst = @(& $mergeAndSort $mainFirst $pkgFirst)
-        $finalOthers = @(& $mergeAndSort $mainOthers $pkgOthers)
-        $finalLast = @(& $mergeAndSort $mainLast $pkgLast)
+        # Стабильная сортировка: по приоритету (убывание), затем по индексу (возрастание)
+        $index = 0
+        $indexedFiles = foreach ($item in $allFiles.GetEnumerator()) {
+            [PSCustomObject]@{
+                File     = $item.Key
+                Priority = [int]$item.Value
+                Index    = $index++
+            }
+        }
+        
+        $sortedFiles = $indexedFiles | Sort-Object -Property @{Expression={$_.Priority}; Descending=$true}, Index
 
-        if ($finalFirst.Count -gt 0) { [void]$ScriptFileRefs.AddRange($finalFirst) }
-        if ($finalOthers.Count -gt 0) { [void]$ScriptFileRefs.AddRange($finalOthers) }
-        if ($finalLast.Count -gt 0) { [void]$ScriptFileRefs.AddRange($finalLast) }
-
-        # SelectSingleNode гарантирует возврат XmlNode или $null, а не строку
+        # Формирование XML узлов
         $scriptRefsNode = $this.XmlDoc.SelectSingleNode("/UIAddon/ScriptFileRefs")
         if (-not $scriptRefsNode) {
             $scriptRefsNode = $this.XmlDoc.CreateElement("ScriptFileRefs")
@@ -157,10 +161,11 @@ class XdbManager {
             $scriptRefsNode.RemoveAll()
         }
 
-        foreach ($script in $ScriptFileRefs) {
-            if (-not [string]::IsNullOrWhiteSpace($script)) {
+        foreach ($item in $sortedFiles) {
+            $file = $item.File
+            if (-not [string]::IsNullOrWhiteSpace($file)) {
                 $itemNode = $this.XmlDoc.CreateElement("Item")
-                $itemNode.SetAttribute("href", $script)
+                $itemNode.SetAttribute("href", $file)
                 $scriptRefsNode.AppendChild($itemNode) | Out-Null
             }
         }

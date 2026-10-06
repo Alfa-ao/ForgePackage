@@ -1,10 +1,12 @@
 ﻿# =============================================
 # Functions/PackageActions.ps1
 # =============================================
+
 function Install-PackageDependencies {
     param(
         [ForgeContext]$Ctx
     )
+
     $forgeMgr = [ForgeJsonManager]::new($Ctx.ForgeJsonPath)
     if (-not $forgeMgr.Data -or -not $forgeMgr.Data.require) {
         Write-Host "  -> В forge.json отсутствует секция require." -ForegroundColor Yellow
@@ -13,7 +15,6 @@ function Install-PackageDependencies {
 
     $requireNode = $forgeMgr.Data.require
     $downloader = [PackageDownloader]::new($Ctx.PackagesJsonPath)
-
     if (-not $downloader.PackagesData) {
         $downloader.PackagesData = [PSCustomObject]@{
             version  = "v1"
@@ -29,7 +30,6 @@ function Install-PackageDependencies {
         $reqVersion = $prop.Value
 
         if ($tagName -in @('api', 'useCommonScripts')) { continue }
-
         if ($tagName -notmatch "^[^/]+/[^/]+$") {
             Write-Host "  -> Некорректный формат тега (ожидается Owner/Repo): $tagName" -ForegroundColor Yellow
             $skippedCount++
@@ -51,8 +51,42 @@ function Install-PackageDependencies {
             $oldPkgName = if (-not [string]::IsNullOrWhiteSpace($existingPkg.name)) { $existingPkg.name } else { $downloader.ResolvedRepo }
             $oldPkgPath = "Packages/$($downloader.ResolvedOwner)/$oldPkgName"
             $localOldPkgDir = Join-Path $Ctx.SelectedAddon.FullName $oldPkgPath
+            
             if (Test-Path $localOldPkgDir) {
-                Remove-Item -Path $localOldPkgDir -Recurse -Force -ErrorAction SilentlyContinue
+                $filesToRemove = [System.Collections.ArrayList]::new()
+                if ($existingPkg.files) {
+                    foreach ($prop in $existingPkg.files.PSObject.Properties) {
+                        [void]$filesToRemove.Add($prop.Name)
+                    }
+                }
+
+                foreach ($file in $filesToRemove) {
+                    $filePath = Join-Path $localOldPkgDir $file
+                    if (Test-Path $filePath) {
+                        Remove-Item -Path $filePath -Force -ErrorAction SilentlyContinue
+                    }
+                }
+
+                Get-ChildItem -Path $localOldPkgDir -Directory -Recurse -Force | 
+                    Sort-Object { $_.FullName.Length } -Descending | 
+                    ForEach-Object {
+                        $items = Get-ChildItem -Path $_.FullName -Force -ErrorAction SilentlyContinue
+                        if ($null -eq $items -or $items.Count -eq 0) {
+                            Remove-Item -Path $_.FullName -Force -ErrorAction SilentlyContinue
+                        }
+                    }
+
+                $repoItems = Get-ChildItem -Path $localOldPkgDir -Force -ErrorAction SilentlyContinue
+                if ($null -eq $repoItems -or $repoItems.Count -eq 0) {
+                    Remove-Item -Path $localOldPkgDir -Force -ErrorAction SilentlyContinue
+                    $ownerDir = Split-Path -Path $localOldPkgDir -Parent
+                    if (Test-Path $ownerDir) {
+                        $ownerItems = Get-ChildItem -Path $ownerDir -Force -ErrorAction SilentlyContinue
+                        if ($null -eq $ownerItems -or $ownerItems.Count -eq 0) {
+                            Remove-Item -Path $ownerDir -Force -ErrorAction SilentlyContinue
+                        }
+                    }
+                }
                 Write-Host "     -> Удалена старая версия." -ForegroundColor DarkGray
             }
         }
@@ -71,11 +105,9 @@ function Install-PackageDependencies {
         }
 
         $downloader.UpdatePackagesJson($remoteForge, $reqVersion)
-        
         $forgeMgr.UpdateRequire($resolvedTag, $reqVersion)
-        
         $installedCount++
-        Write-Host "     -> Успешно установлено." -ForegroundColor Green
+        Write-Host "     -> Успешно установлено $tagName [$reqVersion]" -ForegroundColor Yellow
     }
 
     $packagesDir = Split-Path $Ctx.PackagesJsonPath -Parent
@@ -106,6 +138,7 @@ function Require-Package {
         [string]$TargetTag,
         [ForgeContext]$Ctx
     )
+
     $downloader = [PackageDownloader]::new($Ctx.PackagesJsonPath)
     $downloader.ResolveTrueCasing($TargetTag)
     $tag = "$($downloader.ResolvedOwner)/$($downloader.ResolvedRepo)"
@@ -118,6 +151,7 @@ function Require-Package {
     }
 
     Write-Host "Connection: $tag" -ForegroundColor DarkGray
+
     $forgeMgr = [ForgeJsonManager]::new($Ctx.ForgeJsonPath)
     $xdbMgr   = [XdbManager]::new($Ctx.XdbPath)
 
@@ -133,7 +167,6 @@ function Require-Package {
     }
 
     $downloader.UpdatePackagesJson($remoteForge, $latestTag)
-
     $pkgMgr = [ForgeJsonManager]::new($Ctx.PackagesJsonPath)
     $pkgMgr.Data = $downloader.PackagesData
     $pkgMgr.Save()
@@ -155,11 +188,13 @@ function Remove-Package {
         [string]$TargetTag,
         [ForgeContext]$Ctx
     )
+
     $downloader = [PackageDownloader]::new($Ctx.PackagesJsonPath)
     $downloader.ResolveTrueCasing($TargetTag)
     $tag = "$($downloader.ResolvedOwner)/$($downloader.ResolvedRepo)"
 
     Write-Log "Remove" $tag "DarkYellow" "Gray"
+
     $foundPkg = $downloader.FindPackage($tag)
     if (-not $foundPkg) {
         Write-Host "Пакет $tag не найден в packages.json" -ForegroundColor Red
@@ -171,23 +206,45 @@ function Remove-Package {
     $localPkgDir = Join-Path $Ctx.SelectedAddon.FullName $pkgPath
 
     if (Test-Path $localPkgDir) {
-        try {
-            Get-ChildItem -Path $localPkgDir -Recurse -Force | Remove-Item -Recurse -Force -ErrorAction Stop
-            $repoItems = Get-ChildItem -Path $localPkgDir -Force -ErrorAction SilentlyContinue
-            if ($null -eq $repoItems -or $repoItems.Count -eq 0) {
-                Remove-Item -Path $localPkgDir -Force -ErrorAction Stop
-                Write-Host "  -> Remove: $pkgPath" -ForegroundColor DarkGray
+        $filesToRemove = [System.Collections.ArrayList]::new()
+        if ($foundPkg.files) {
+            foreach ($prop in $foundPkg.files.PSObject.Properties) {
+                [void]$filesToRemove.Add($prop.Name)
             }
+        }
+
+        foreach ($file in $filesToRemove) {
+            $filePath = Join-Path $localPkgDir $file
+            if (Test-Path $filePath) {
+                Remove-Item -Path $filePath -Force -ErrorAction SilentlyContinue
+                Write-Host "  -> Removed file: $file" -ForegroundColor DarkGray
+            }
+        }
+
+        Get-ChildItem -Path $localPkgDir -Directory -Recurse -Force | 
+            Sort-Object { $_.FullName.Length } -Descending | 
+            ForEach-Object {
+                $items = Get-ChildItem -Path $_.FullName -Force -ErrorAction SilentlyContinue
+                if ($null -eq $items -or $items.Count -eq 0) {
+                    Remove-Item -Path $_.FullName -Force -ErrorAction SilentlyContinue
+                }
+            }
+
+        $repoItems = Get-ChildItem -Path $localPkgDir -Force -ErrorAction SilentlyContinue
+        if ($null -eq $repoItems -or $repoItems.Count -eq 0) {
+            Remove-Item -Path $localPkgDir -Force -ErrorAction Stop
+            Write-Host "  -> Removed folder: $pkgPath" -ForegroundColor DarkGray
+            
             $ownerDir = Split-Path -Path $localPkgDir -Parent
             if (Test-Path $ownerDir) {
                 $ownerItems = Get-ChildItem -Path $ownerDir -Force -ErrorAction SilentlyContinue
                 if ($null -eq $ownerItems -or $ownerItems.Count -eq 0) {
                     Remove-Item -Path $ownerDir -Force -ErrorAction Stop
-                    Write-Host "  -> Remove: $(Split-Path $ownerDir -Leaf)" -ForegroundColor DarkGray
+                    Write-Host "  -> Removed folder: $(Split-Path $ownerDir -Leaf)" -ForegroundColor DarkGray
                 }
             }
-        } catch {
-            Write-Host "  -> Не удалось очистить/удалить папку: $_" -ForegroundColor Red
+        } else {
+            Write-Host "  -> Папка $pkgPath содержит файлы других пакетов, не удалена." -ForegroundColor Yellow
         }
     }
 
@@ -216,11 +273,13 @@ function Update-SinglePackage {
         [string]$TargetTag,
         [ForgeContext]$Ctx
     )
+
     $downloader = [PackageDownloader]::new($Ctx.PackagesJsonPath)
     $downloader.ResolveTrueCasing($TargetTag)
     $tag = "$($downloader.ResolvedOwner)/$($downloader.ResolvedRepo)"
 
     Write-Log "Update" $tag "Green" "Gray"
+
     $forgeMgr = [ForgeJsonManager]::new($Ctx.ForgeJsonPath)
     $xdbMgr   = [XdbManager]::new($Ctx.XdbPath)
 
@@ -244,14 +303,37 @@ function Update-SinglePackage {
     $oldPkgName = if (-not [string]::IsNullOrWhiteSpace($foundPkg.name)) { $foundPkg.name } else { $downloader.ResolvedRepo }
     $oldPkgPath = "Packages/$($downloader.ResolvedOwner)/$oldPkgName"
     $localOldPkgDir = Join-Path $Ctx.SelectedAddon.FullName $oldPkgPath
+
     if (Test-Path $localOldPkgDir) {
-        try {
-            Get-ChildItem -Path $localOldPkgDir -Recurse -Force | Remove-Item -Recurse -Force -ErrorAction Stop
-            $repoItems = Get-ChildItem -Path $localOldPkgDir -Force -ErrorAction SilentlyContinue
-            if ($null -eq $repoItems -or $repoItems.Count -eq 0) {
-                Remove-Item -Path $localOldPkgDir -Force -ErrorAction Stop
-                Write-Host "  -> Removed folder: $oldPkgPath" -ForegroundColor DarkGray
+        $filesToRemove = [System.Collections.ArrayList]::new()
+        if ($foundPkg.files) {
+            foreach ($prop in $foundPkg.files.PSObject.Properties) {
+                [void]$filesToRemove.Add($prop.Name)
             }
+        }
+
+        foreach ($file in $filesToRemove) {
+            $filePath = Join-Path $localOldPkgDir $file
+            if (Test-Path $filePath) {
+                Remove-Item -Path $filePath -Force -ErrorAction SilentlyContinue
+                Write-Host "  -> Removed file: $file" -ForegroundColor DarkGray
+            }
+        }
+
+        Get-ChildItem -Path $localOldPkgDir -Directory -Recurse -Force | 
+            Sort-Object { $_.FullName.Length } -Descending | 
+            ForEach-Object {
+                $items = Get-ChildItem -Path $_.FullName -Force -ErrorAction SilentlyContinue
+                if ($null -eq $items -or $items.Count -eq 0) {
+                    Remove-Item -Path $_.FullName -Force -ErrorAction SilentlyContinue
+                }
+            }
+
+        $repoItems = Get-ChildItem -Path $localOldPkgDir -Force -ErrorAction SilentlyContinue
+        if ($null -eq $repoItems -or $repoItems.Count -eq 0) {
+            Remove-Item -Path $localOldPkgDir -Force -ErrorAction Stop
+            Write-Host "  -> Removed folder: $oldPkgPath" -ForegroundColor DarkGray
+            
             $ownerDir = Split-Path -Path $localOldPkgDir -Parent
             if (Test-Path $ownerDir) {
                 $ownerItems = Get-ChildItem -Path $ownerDir -Force -ErrorAction SilentlyContinue
@@ -260,14 +342,14 @@ function Update-SinglePackage {
                     Write-Host "  -> Removed folder: $(Split-Path $ownerDir -Leaf)" -ForegroundColor DarkGray
                 }
             }
-        } catch {
-            Write-Host "  -> Не удалось очистить/удалить старую папку: $_" -ForegroundColor Red
+        } else {
+            Write-Host "  -> Папка $oldPkgPath содержит файлы других пакетов, не удалена." -ForegroundColor Yellow
         }
     }
 
     $downloader.DownloadFiles($tag, $remoteForge, $latestTag)
-
     $downloader.UpdatePackagesJson($remoteForge, $latestTag)
+
     $pkgMgr = [ForgeJsonManager]::new($Ctx.PackagesJsonPath)
     $pkgMgr.Data = $downloader.PackagesData
     $pkgMgr.Save()
@@ -288,7 +370,9 @@ function Update-AllPackages {
     param(
         [ForgeContext]$Ctx
     )
+
     Write-Host "Обновление всех пакетов..." -ForegroundColor Yellow
+
     $tempDownloader = [PackageDownloader]::new($Ctx.PackagesJsonPath)
     if (-not $tempDownloader.PackagesData -or -not $tempDownloader.PackagesData.packages) {
         Write-Host "Пакеты не найдены в packages.json." -ForegroundColor Yellow
@@ -302,6 +386,7 @@ function Update-AllPackages {
     foreach ($pkg in $packagesList) {
         $currentTag = $pkg.tag
         if ([string]::IsNullOrWhiteSpace($currentTag)) { continue }
+        
         Update-SinglePackage -TargetTag $currentTag -Ctx $Ctx
         $updatedCount++
     }
