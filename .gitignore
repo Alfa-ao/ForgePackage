@@ -1,0 +1,4 @@
+*.cmd
+exclude*
+out*.txt
+_.txt
