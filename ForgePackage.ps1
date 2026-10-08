@@ -306,7 +306,7 @@ if (-not (Test-Path $context.ForgeJsonPath)) {
             $useCommonScriptsVal = $true
             Write-Host "      -> Установлено: true. Пользовательское подключение SampleCommon игнорируется." -ForegroundColor Green
         } else {
-            Write-Host "      -> Установлено: false." -ForegroundColor Yellow
+            Write-Host "      -> Установлено: false." -ForegroundColor Green
         }
         $forgeData["require"]["useCommonScripts"] = $useCommonScriptsVal
 

@@ -7,10 +7,14 @@ class PackageDownloader {
     [PSCustomObject]$PackagesData
     [string]$ResolvedOwner
     [string]$ResolvedRepo
+    [hashtable]$ForgeCache
+    [ForgeJsonManager]$MainForgeManager
 
-    PackageDownloader([string]$packagesJsonPath) {
+    PackageDownloader([string]$packagesJsonPath, [ForgeJsonManager]$mainForgeManager) {
         $this.PackagesJsonPath = $packagesJsonPath
+        $this.MainForgeManager = $mainForgeManager
         $this.Headers = @{ "User-Agent" = "PowerShell-ForgeScript" }
+        $this.ForgeCache = @{}
         if (Test-Path $packagesJsonPath) {
             $raw = Get-Content $packagesJsonPath -Raw -Encoding UTF8 | ConvertFrom-Json
             if ($null -ne $raw.packages -and $raw.packages -isnot [array]) {
@@ -69,6 +73,10 @@ class PackageDownloader {
     }
 
     [PSCustomObject]DownloadRemoteForge([string]$packageName, [string]$tag) {
+        $cacheKey = "$packageName@$tag".ToLower()
+        if ($this.ForgeCache.ContainsKey($cacheKey)) {
+            return $this.ForgeCache[$cacheKey]
+        }
         $parts = $packageName -split '/'
         $owner = $parts[0]
         $repo  = $parts[1]
@@ -77,6 +85,7 @@ class PackageDownloader {
             $content = Invoke-RestMethod -Uri $url -Headers $this.Headers
             $content | Add-Member -NotePropertyName "_owner" -NotePropertyValue $owner -Force
             $content | Add-Member -NotePropertyName "_repo"  -NotePropertyValue $repo  -Force
+            $this.ForgeCache[$cacheKey] = $content
             return $content
         } catch {
             Write-Host "Файл forge.json отсутствует в репозитории по тегу $tag." -ForegroundColor Red
@@ -89,10 +98,6 @@ class PackageDownloader {
         $owner = $parts[0]
         $repo  = $parts[1]
         $branchOrTag = if ([string]::IsNullOrWhiteSpace($tag)) { "main" } else { $tag }
-        if ([string]::IsNullOrWhiteSpace($tag)) {
-            Write-Host "(HELP) Тег не передан, используется ветка 'main'." -ForegroundColor Yellow
-        }
-
         $filesToDownload = [System.Collections.ArrayList]::new()
         if ($remoteForge.execute -and $remoteForge.execute.unpack) {
             $unpack = $remoteForge.execute.unpack
@@ -105,27 +110,13 @@ class PackageDownloader {
                 }
             }
         }
-
         $remoteName = $remoteForge.name
         $dirName = if (-not [string]::IsNullOrWhiteSpace($remoteName)) { $remoteName } else { $repo }
-
-        if ([string]::IsNullOrWhiteSpace($this.PackagesJsonPath)) {
-            Write-Host "PackagesJsonPath не инициализирован в PackageDownloader" -ForegroundColor Red
-            return $null
-        }
-
         $packagesDir = Split-Path $this.PackagesJsonPath -Parent
         $targetDir   = Join-Path $packagesDir "$owner\$dirName"
-
-        if ([string]::IsNullOrWhiteSpace($targetDir)) {
-            Write-Host "Не удалось сформировать путь targetDir" -ForegroundColor Red
-            return $null
-        }
-
         if (-not (Test-Path $targetDir)) {
             New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
         }
-
         foreach ($file in $filesToDownload) {
             if ([string]::IsNullOrWhiteSpace($file)) { continue }
             $fileUrl   = "https://raw.githubusercontent.com/$owner/$repo/$branchOrTag/$file"
@@ -139,55 +130,74 @@ class PackageDownloader {
                 Write-Host "  -> Download: $file" -ForegroundColor DarkGray
             } catch {
                 Write-Host "  -> Не удалось скачать: $file" -ForegroundColor Red
-                Write-Host "     Детали: $_" -ForegroundColor DarkGray
             }
         }
 
-        $relativePath = "Packages/$owner/$dirName"
-        return $relativePath.Replace('\', '/')
+        # Обработка вложенных зависимостей из require
+        if ($remoteForge.require) {
+            foreach ($reqProp in $remoteForge.require.PSObject.Properties) {
+                $reqTag = $reqProp.Name
+                $reqVersion = $reqProp.Value
+                
+                # Пропуск системных ключей
+                if ($reqTag -in @('api', 'useCommonScripts')) { continue }
+                
+                # Проверка формата тега
+                if ($reqTag -notmatch "^[^/]+/[^/]+$") { continue }
+                
+                Write-Host "  -> Found nested dependency: $reqTag [$reqVersion]" -ForegroundColor DarkYellow
+                
+                # Проверка наличия уже установленной версии
+                $existingNestedPkg = $this.FindPackage($reqTag)
+                if ($existingNestedPkg -and $existingNestedPkg.version.ToString().Trim() -eq $reqVersion.ToString().Trim()) {
+                    Write-Host "     -> Dependency already installed." -ForegroundColor DarkGray
+                    continue
+                }
+                
+                # Скачивание forge.json вложенной зависимости
+                $nestedForge = $this.DownloadRemoteForge($reqTag, $reqVersion)
+                if (-not $nestedForge) {
+                    Write-Host "     -> Failed to fetch nested dependency forge.json." -ForegroundColor Red
+                    continue
+                }
+                
+                # Рекурсивный вызов скачивания файлов
+                $this.DownloadFiles($reqTag, $nestedForge, $reqVersion)
+                
+                # Регистрация вложенной зависимости в packages.json
+                $this.UpdatePackagesJson($nestedForge, $reqVersion)
+
+                # Добавление вложенной зависимости в основной forge.json
+                if ($this.MainForgeManager) {
+                    $this.MainForgeManager.UpdateRequire($reqTag, $reqVersion)
+                }
+            }
+        }
+        return "Packages/$owner/$dirName".Replace('\', '/')
     }
 
     [void]UpdatePackagesJson([PSCustomObject]$remoteForge, [string]$newVersion) {
         $tagValue = "$($remoteForge._owner)/$($remoteForge._repo)"
         if ($remoteForge.PSObject.Properties['_owner']) { $remoteForge.PSObject.Properties.Remove('_owner') }
         if ($remoteForge.PSObject.Properties['_repo'])  { $remoteForge.PSObject.Properties.Remove('_repo') }
-
-        if ($remoteForge.PSObject.Properties['tag']) {
-            $remoteForge.tag = $tagValue
-        } else {
-            $remoteForge | Add-Member -NotePropertyName "tag" -NotePropertyValue $tagValue -Force
-        }
-        if ($remoteForge.PSObject.Properties['version']) {
-            $remoteForge.version = $newVersion
-        } else {
-            $remoteForge | Add-Member -NotePropertyName "version" -NotePropertyValue $newVersion -Force
-        }
-        if ($remoteForge.PSObject.Properties['type']) {
-            $remoteForge.type = "Library"
-        } else {
-            $remoteForge | Add-Member -NotePropertyName "type" -NotePropertyValue "Library" -Force
-        }
-
+        if ($remoteForge.PSObject.Properties['tag']) { $remoteForge.tag = $tagValue }
+        else { $remoteForge | Add-Member -NotePropertyName "tag" -NotePropertyValue $tagValue -Force }
+        if ($remoteForge.PSObject.Properties['version']) { $remoteForge.version = $newVersion }
+        else { $remoteForge | Add-Member -NotePropertyName "version" -NotePropertyValue $newVersion -Force }
+        if ($remoteForge.PSObject.Properties['type']) { $remoteForge.type = "Library" }
+        else { $remoteForge | Add-Member -NotePropertyName "type" -NotePropertyValue "Library" -Force }
         if (-not $this.PackagesData) {
-            $this.PackagesData = [PSCustomObject]@{
-                version  = "v1"
-                packages = [array]@()
-            }
+            $this.PackagesData = [PSCustomObject]@{ version = "v1"; packages = [array]@() }
         }
         if (-not ($this.PackagesData.PSObject.Properties.Name -contains 'packages')) {
             $this.PackagesData | Add-Member -NotePropertyName "packages" -NotePropertyValue ([array]@()) -Force
         }
-
         $list = [System.Collections.ArrayList]::new()
         $current = $this.PackagesData.packages
         if ($null -ne $current) {
-            if ($current -is [array]) {
-                [void]$list.AddRange([object[]]$current)
-            } else {
-                [void]$list.Add($current)
-            }
+            if ($current -is [array]) { [void]$list.AddRange([object[]]$current) }
+            else { [void]$list.Add($current) }
         }
-
         $foundIndex = -1
         for ($i = 0; $i -lt $list.Count; $i++) {
             $currentTag = $list[$i].tag
@@ -196,12 +206,8 @@ class PackageDownloader {
                 break
             }
         }
-
-        if ($foundIndex -ge 0) {
-            $list[$foundIndex] = $remoteForge
-        } else {
-            [void]$list.Add($remoteForge)
-        }
+        if ($foundIndex -ge 0) { $list[$foundIndex] = $remoteForge }
+        else { [void]$list.Add($remoteForge) }
         $this.PackagesData.packages = [array]$list.ToArray()
     }
 
@@ -209,11 +215,8 @@ class PackageDownloader {
         if (-not $this.PackagesData -or -not $this.PackagesData.packages) { return }
         $list = [System.Collections.ArrayList]::new()
         $current = $this.PackagesData.packages
-        if ($current -is [array]) {
-            [void]$list.AddRange([object[]]$current)
-        } elseif ($null -ne $current) {
-            [void]$list.Add($current)
-        }
+        if ($current -is [array]) { [void]$list.AddRange([object[]]$current) }
+        elseif ($null -ne $current) { [void]$list.Add($current) }
         $targetTag = $tag.Trim().ToLower()
         for ($i = $list.Count - 1; $i -ge 0; $i--) {
             $currentTag = $list[$i].tag

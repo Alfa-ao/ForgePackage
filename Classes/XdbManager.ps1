@@ -110,7 +110,7 @@ class XdbManager {
                 $formatted = if ($prefix) { Format-PackagePath $file $prefix } else { $file }
                 if ([string]::IsNullOrWhiteSpace($formatted)) { continue }
                 
-                # Применение жестких приоритетов для стандартных скриптов
+                # Применение жестких приоритетов для CommonScripts
                 if ([ForgeContext]::CommonScriptsPriority.ContainsKey($formatted)) {
                     $priority = [ForgeContext]::CommonScriptsPriority[$formatted]
                 }
@@ -132,7 +132,7 @@ class XdbManager {
             }
         }
 
-        # Удаление стандартных скриптов при активном useCommonScripts
+        # Удаление CommonScripts при активном useCommonScripts
         if ($effectiveUseCommon) {
             $keysToRemove = @($allFiles.Keys | Where-Object { $_ -match "^/?Mods/SampleCommon" })
             foreach ($key in $keysToRemove) {
@@ -160,13 +160,16 @@ class XdbManager {
         } else {
             $scriptRefsNode.RemoveAll()
         }
-
+        
+        Write-Host "  -> Update ScriptFileRefs..." -ForegroundColor DarkGray
+        
         foreach ($item in $sortedFiles) {
             $file = $item.File
             if (-not [string]::IsNullOrWhiteSpace($file)) {
                 $itemNode = $this.XmlDoc.CreateElement("Item")
                 $itemNode.SetAttribute("href", $file)
                 $scriptRefsNode.AppendChild($itemNode) | Out-Null
+                Write-Host "    -> add file: $file" -ForegroundColor DarkGray
             }
         }
     }
