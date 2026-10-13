@@ -1,12 +1,6 @@
 ﻿# =============================================
 # Functions/BackupHelpers.ps1
 # =============================================
-
-
-
-# =============================================
-# Функция резервного копирования и очистки Packages
-# =============================================
 function Backup-AndCleanPackages {
     param (
         [Parameter(Mandatory=$true)]
@@ -14,11 +8,10 @@ function Backup-AndCleanPackages {
     )
 
     if (-not (Test-Path -Path $PackagesPath)) {
-        Write-Host "[Info] Папка Packages не существует, пропуск резервного копирования." -ForegroundColor DarkGray
+        Write-Host "Папка Packages не существует." -ForegroundColor DarkGray
         return
     }
-
-    # Определяем папку для бэкапов (на уровень выше Packages)
+    
     $addonRoot = Split-Path -Path $PackagesPath -Parent
     $backupRoot = Join-Path -Path $addonRoot -ChildPath "Backups"
     
@@ -32,7 +25,6 @@ function Backup-AndCleanPackages {
     try {
         Write-Host "  -> Создание резервной копии папки Packages..." -ForegroundColor DarkGray
         
-        # Архивируем содержимое папки (используем \*, чтобы не архивировать саму папку, а только её содержимое)
         Compress-Archive -Path "$PackagesPath\*" -DestinationPath $backupFile -Force
         
         Write-Host "  -> Удаление оригинальной папки Packages..." -ForegroundColor DarkGray
@@ -40,7 +32,7 @@ function Backup-AndCleanPackages {
         
         Write-Host "  -> Резервная копия успешно создана: $backupFile" -ForegroundColor DarkGray
     } catch {
-        Write-Host "[Error] Не удалось создать резервную копию или удалить папку: $_" -ForegroundColor DarkGray
+        Write-Host "Не удалось создать резервную копию или удалить папку: $_" -ForegroundColor DarkGray
     }
 }
 

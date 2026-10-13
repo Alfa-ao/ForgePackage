@@ -207,7 +207,7 @@ function Remove-Package {
             Write-Host "  -> Folder $pkgPath not deleted." -ForegroundColor DarkGray
         }
     }
-    $xdbMgr   = [XdbManager]::new($Ctx.XdbPath)
+    $xdbMgr = [XdbManager]::new($Ctx.XdbPath)
     $downloader.RemoveFromPackagesJson($tag)
     $pkgMgr = [ForgeJsonManager]::new($Ctx.PackagesJsonPath)
     $pkgMgr.Data = $downloader.PackagesData

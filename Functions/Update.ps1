@@ -8,6 +8,7 @@ function Invoke-ScriptUpdate {
     )
 
     Write-Host "Проверка обновлений..." -ForegroundColor DarkGray
+    
     try {
         $response = $Api.GetLatestRelease($Config.RepoOwner, $Config.RepoName)
         $latestTag = $response.tag_name

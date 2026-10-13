@@ -5,7 +5,7 @@
 . "$PSScriptRoot\Classes\ForgeConfig.ps1"
 . "$PSScriptRoot\Functions\UIHelpers.ps1"
 . "$PSScriptRoot\Functions\BackupHelpers.ps1"
-. "$PSScriptRoot\Functions\UpdateHelpers.ps1"
+. "$PSScriptRoot\Functions\Update.ps1"
 . "$PSScriptRoot\Functions\CreateForge.ps1"
 . "$PSScriptRoot\Classes\GithubApi.ps1"
 . "$PSScriptRoot\Classes\ForgeContext.ps1"
