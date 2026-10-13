@@ -2,8 +2,8 @@
 # Classes/ForgeConfig.ps1
 # =============================================
 class ForgeConfig {
-    [string]$PackagesVersion = "v1"
-    [string]$AppVersion      = "1.0.0"
+    [string]$PackagesVersion = "v1" # packages.json
+    [string]$AppVersion      = "1.0.0" # GitHub
     [string]$ScriptName      = "ForgePackage"
     [string]$RepoOwner       = "Alfa-ao"
     [string]$RepoName        = "ForgePackage"
