@@ -21,6 +21,7 @@ function Invoke-ScriptUpdate {
             Write-Host "Установлена актуальная версия." -ForegroundColor DarkGreen
         }
     } catch {
-        Write-Host "Ошибка проверки обновлений: $($_.Exception.Message)" -ForegroundColor Red
+        Write-Host "Ошибка:" -ForegroundColor Red
+        Write-Host $_.Exception.Message -ForegroundColor Red
     }
 }

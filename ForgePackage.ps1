@@ -31,9 +31,8 @@ Write-Host ""
 Write-Host "Directory: $($config.ScriptPath)" -ForegroundColor DarkGray
 
 # Поиск папки игры
-$registryPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\gcgame_0.359"
 try {
-    $installInfo = Get-ItemProperty -Path $registryPath -Name "InstallLocation" -ErrorAction Stop
+    $installInfo = Get-ItemProperty -Path $config.registryPath -Name "InstallLocation" -ErrorAction Stop
     $installLocation = $installInfo.InstallLocation
     Write-Host "Directory Allods Online: $installLocation" -ForegroundColor DarkGray
 } catch {
