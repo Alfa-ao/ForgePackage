@@ -61,10 +61,22 @@
         "api": "17.0.01.67",
         "useCommonScripts": true,
         "Alfa-ao/DnDManager": "v1.2.1",
-        "Alfa-ao/Enum": "v1.1.0"
+        "Alfa-ao/Enum": "v1.1.0",
+        "Alfa-ao/DebugService": "v1.0.0"
     },
     "files": {
         "Scripts/Config.lua": 50,
+        "Scripts/State.lua": 10,
+        "Scripts/Search/RecipeEvaluator.lua": 10,
+        "Scripts/Search/DrumShiftMapper.lua": 10,
+        "Scripts/Search/BacktrackingSearchAlgorithm.lua": 10,
+        "Scripts/ClassRecipeService.lua": 10,
+        "Scripts/ClassSearchService.lua": 10,
+        "Scripts/ClassViewService.lua": 10,
+        "Scripts/ClassGUIAlchemyV2.lua": 10,
+        "Scripts/ClassGUITextContainer.lua": 10,
+        "Scripts/ClassAlchemyEvents.lua": 10,
+        "Scripts/ClassAvatarEvents.lua": 10,
         "Scripts/Main.lua": 0
     }
 }
