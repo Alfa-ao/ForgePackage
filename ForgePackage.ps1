@@ -118,7 +118,9 @@ $addons = @()
 if (Test-Path $addonsPath) {
     $addons = [array](Get-ChildItem -Path $addonsPath -Directory | Where-Object { $_.Name -notmatch '^!' } | Sort-Object Name)
     $header = "{0,-4} | {1,-25} | {2}" -f "#", "AddonName", "forge"
-    Write-Host ""; Write-Host $header; Write-Host ("-" * $header.Length)
+    Write-Host "";
+    Write-Host $header;
+    Write-Host ("-" * $header.Length)
     
     $index = 1
     foreach ($addon in $addons) {
