@@ -7,26 +7,28 @@ class GithubApi {
     [string]$RawBase = "https://raw.githubusercontent.com"
 
     GithubApi() {
-        $this.Headers = @{ "User-Agent" = "PowerShell-ForgeScript" }
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+        $this.Headers = @{
+            "User-Agent" = "ForgePackage-PowerShell"
+            "Accept"     = "application/vnd.github.v3+json"
+        }
     }
 
-    # Получение информации о последнем релизе
     [PSCustomObject]GetLatestRelease([string]$owner, [string]$repo) {
         $url = "$($this.ApiBase)/repos/$owner/$repo/releases/latest"
-        return Invoke-RestMethod -Uri $url -Headers $this.Headers
+        return Invoke-RestMethod -Uri $url -Headers $this.Headers -UseBasicParsing
     }
 
-    # Получение истинного регистра владельца и репозитория
     [PSCustomObject]GetRepositoryInfo([string]$owner, [string]$repo) {
         $url = "$($this.ApiBase)/repos/$owner/$repo"
-        return Invoke-RestMethod -Uri $url -Headers $this.Headers
+        return Invoke-RestMethod -Uri $url -Headers $this.Headers -UseBasicParsing
     }
 
-    # Получение имени последнего тега
     [string]GetLatestTag([string]$owner, [string]$repo) {
         $url = "$($this.ApiBase)/repos/$owner/$repo/tags"
         try {
-            $tags = Invoke-RestMethod -Uri $url -Headers $this.Headers
+            $tags = Invoke-RestMethod -Uri $url -Headers $this.Headers -UseBasicParsing
             if ($tags.Count -eq 0) { return $null }
             if ($tags -isnot [array]) { return $tags.name }
             return $tags[0].name
@@ -40,25 +42,24 @@ class GithubApi {
         }
     }
 
-    # Чтение JSON файла из raw-контента
     [PSCustomObject]GetRawJson([string]$owner, [string]$repo, [string]$ref, [string]$filePath) {
         $url = "$($this.RawBase)/$owner/$repo/$ref/$filePath"
         try {
-            return Invoke-RestMethod -Uri $url -Headers $this.Headers
+            return Invoke-RestMethod -Uri $url -Headers $this.Headers -UseBasicParsing
         } catch {
             Write-Host "Файл $filePath отсутствует в репозитории по тегу $ref." -ForegroundColor Red
             return $null
         }
     }
 
-    # Скачивание файла из raw-контента
     [void]DownloadFile([string]$owner, [string]$repo, [string]$ref, [string]$filePath, [string]$destinationPath) {
         $url = "$($this.RawBase)/$owner/$repo/$ref/$filePath"
-        Invoke-WebRequest -Uri $url -OutFile $destinationPath -Headers $this.Headers -ErrorAction Stop
-    }
+        
+        $localDir = Split-Path $destinationPath -Parent
+        if (-not (Test-Path $localDir)) {
+            New-Item -ItemType Directory -Path $localDir -Force | Out-Null
+        }
 
-    # Скачивание файла по прямой ссылке (для релизов)
-    [void]DownloadUrl([string]$url, [string]$destinationPath) {
-        (New-Object System.Net.WebClient).DownloadFile($url, $destinationPath)
+        Invoke-WebRequest -Uri $url -OutFile $destinationPath -Headers $this.Headers -UseBasicParsing -ErrorAction Stop
     }
 }
