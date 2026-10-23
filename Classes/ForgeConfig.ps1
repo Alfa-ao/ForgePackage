@@ -4,7 +4,7 @@
 class ForgeConfig {
     [string]$registryPath    = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\gcgame_0.359"
     [string]$PackagesVersion = "v1" # packages.json
-    [string]$AppVersion      = "1.0.0" # GitHub
+    [string]$AppVersion      = "1.0.1" # GitHub
     [string]$ScriptName      = "ForgePackage"
     [string]$RepoOwner       = "Alfa-ao"
     [string]$RepoName        = "ForgePackage"
