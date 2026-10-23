@@ -4,6 +4,7 @@
 class ForgeJsonManager {
     [string]$FilePath
     [PSCustomObject]$Data
+
     static [string[]]$ArrayProps = @(
         'unpack', 'packages', 'authors', 'keywords'
     )
@@ -74,15 +75,20 @@ class ForgeJsonManager {
     [string]FormatJsonInternal($Object, [int]$IndentLevel) {
         $indent     = "    " * $IndentLevel
         $nextIndent = "    " * ($IndentLevel + 1)
+
         if ($null -eq $Object) { return "null" }
+        
         if ($Object -is [bool]) { return $Object.ToString().ToLower() }
+        
         if ($Object -is [string]) {
             $escaped = $Object.Replace('\', '\\').Replace('"', '\"').Replace("`n", '\n').Replace("`r", '\r').Replace("`t", '\t')
             return "`"$escaped`""
         }
+        
         if ($Object -is [int] -or $Object -is [long] -or $Object -is [double] -or $Object -is [decimal]) {
-            return $Object.ToString()
+            return $Object.ToString([System.Globalization.CultureInfo]::InvariantCulture)
         }
+        
         if ($Object -is [System.Collections.IDictionary] -or $Object -is [PSCustomObject]) {
             $items = [System.Collections.ArrayList]::new()
             $props = if ($Object -is [System.Collections.IDictionary]) {
@@ -107,6 +113,7 @@ class ForgeJsonManager {
             if ($items.Count -eq 0) { return "{}" }
             return "{`n" + ($items -join ",`n") + "`n$indent}"
         }
+        
         if ($Object -is [System.Collections.IEnumerable]) {
             $items = [System.Collections.ArrayList]::new()
             foreach ($item in $Object) {
@@ -116,6 +123,7 @@ class ForgeJsonManager {
             if ($items.Count -eq 0) { return "[]" }
             return "[`n" + ($items -join ",`n") + "`n$indent]"
         }
+        
         return "`"$($Object.ToString())`""
     }
 }

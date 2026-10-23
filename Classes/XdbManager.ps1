@@ -1,7 +1,6 @@
 ﻿# =============================================
 # Classes/XdbManager.ps1
 # =============================================
-
 function Get-PackagePrefix {
     param([PSCustomObject]$pkg)
     if (-not $pkg -or -not $pkg.tag) { return "" }
@@ -54,9 +53,10 @@ class XdbManager {
 
     [void]ApplyForgeChanges([PSCustomObject]$forgeData, [PSCustomObject]$packagesData) {
         $this.Load()
-
+        
         $addonUseCommon = $forgeData.require.useCommonScripts
         $effectiveUseCommon = $false
+        
         if ($addonUseCommon -eq $true) {
             $effectiveUseCommon = $true
         } else {
@@ -71,20 +71,20 @@ class XdbManager {
                 }
             }
         }
-
+        
         if (-not $this.XmlDoc.UIAddon.userAddonInfo) {
             $node = $this.XmlDoc.CreateElement("userAddonInfo")
             $this.XmlDoc.UIAddon.AppendChild($node) | Out-Null
         }
+        
         $userAddonInfoNode = $this.XmlDoc.UIAddon.userAddonInfo
-
         $useCommonNode = $userAddonInfoNode.SelectSingleNode("useCommonScripts")
         if (-not $useCommonNode) {
             $useCommonNode = $this.XmlDoc.CreateElement("useCommonScripts")
             $userAddonInfoNode.AppendChild($useCommonNode) | Out-Null
         }
         $useCommonNode.InnerText = $effectiveUseCommon.ToString().ToLower()
-
+        
         $addonVersion = $forgeData.version
         if (-not [string]::IsNullOrWhiteSpace($addonVersion)) {
             $versionNode = $userAddonInfoNode.SelectSingleNode("version")
@@ -94,33 +94,31 @@ class XdbManager {
             }
             $versionNode.InnerText = $addonVersion.ToString().Trim()
         }
-
+        
         # Сбор файлов с сохранением исходного порядка
         $allFiles = [ordered]@{}
-
+        
         $addFiles = {
             param($filesObj, $prefix)
             if (-not $filesObj) { return }
-            
-            # filesObj представляет собой словарь { "путь": приоритет }
             foreach ($prop in $filesObj.PSObject.Properties) {
                 $file = $prop.Name
                 $priority = $prop.Value
-                
                 $formatted = if ($prefix) { Format-PackagePath $file $prefix } else { $file }
                 if ([string]::IsNullOrWhiteSpace($formatted)) { continue }
                 
-                # Применение жестких приоритетов для CommonScripts
+                # Для CoreScripts файлов всегда используются жесткие приоритеты из CommonScriptsPriority
+                # Пользовательские значения из forge.json игнорируются
                 if ([ForgeContext]::CommonScriptsPriority.ContainsKey($formatted)) {
                     $priority = [ForgeContext]::CommonScriptsPriority[$formatted]
                 }
                 
-                $allFiles[$formatted] = [int]$priority
+                $allFiles[$formatted] = [double]$priority
             }
         }
-
+        
         & $addFiles $forgeData.files $null
-
+        
         if ($packagesData -and $packagesData.packages) {
             $pkgs = $packagesData.packages
             if ($pkgs -isnot [array]) { $pkgs = [array]$pkgs }
@@ -131,7 +129,7 @@ class XdbManager {
                 }
             }
         }
-
+        
         # Удаление CommonScripts при активном useCommonScripts
         if ($effectiveUseCommon) {
             $keysToRemove = @($allFiles.Keys | Where-Object { $_ -match "^/?Mods/SampleCommon" })
@@ -139,20 +137,18 @@ class XdbManager {
                 $allFiles.Remove($key)
             }
         }
-
-        # Стабильная сортировка: по приоритету (убывание), затем по индексу (возрастание)
+        
         $index = 0
         $indexedFiles = foreach ($item in $allFiles.GetEnumerator()) {
             [PSCustomObject]@{
                 File     = $item.Key
-                Priority = [int]$item.Value
+                Priority = [double]$item.Value
                 Index    = $index++
             }
         }
         
         $sortedFiles = $indexedFiles | Sort-Object -Property @{Expression={$_.Priority}; Descending=$true}, Index
-
-        # Формирование XML узлов
+        
         $scriptRefsNode = $this.XmlDoc.SelectSingleNode("/UIAddon/ScriptFileRefs")
         if (-not $scriptRefsNode) {
             $scriptRefsNode = $this.XmlDoc.CreateElement("ScriptFileRefs")
@@ -162,7 +158,6 @@ class XdbManager {
         }
         
         Write-Host "  -> Update ScriptFileRefs..." -ForegroundColor DarkGray
-        
         foreach ($item in $sortedFiles) {
             $file = $item.File
             if (-not [string]::IsNullOrWhiteSpace($file)) {
