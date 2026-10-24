@@ -1,6 +1,61 @@
 ﻿# =============================================
 # Functions/CreateForge.ps1
 # =============================================
+
+# Извлечение логики чтения версии API из game.version
+function Get-GameApiVersion {
+    param([string]$GameInstallPath)
+    $gameVersionFile = Join-Path $GameInstallPath "Profiles\game.version"
+    $apiVersion = $null
+    if (Test-Path $gameVersionFile) {
+        try {
+            $stream = [System.IO.File]::OpenRead($gameVersionFile)
+            $stream.Seek(8, [System.IO.SeekOrigin]::Begin) | Out-Null
+            $length = $stream.ReadByte()
+            $stream.Close()
+            if ($length -gt 0) {
+                $stream = [System.IO.File]::OpenRead($gameVersionFile)
+                $stream.Seek(12, [System.IO.SeekOrigin]::Begin) | Out-Null
+                $buffer = New-Object byte[] $length
+                $bytesRead = $stream.Read($buffer, 0, $length)
+                $stream.Close()
+                if ($bytesRead -eq $length) {
+                    $apiVersion = [System.Text.Encoding]::ASCII.GetString($buffer)
+                }
+            }
+        } catch {
+            Write-Host "  -> Ошибка чтения game.version." -ForegroundColor Yellow
+        }
+    }
+    return $apiVersion
+}
+
+# Синхронизация версии API в forge.json с актуальной версией игры
+function Sync-ForgeApiVersion {
+    param(
+        [ForgeJsonManager]$ForgeMgr,
+        [string]$GameInstallPath
+    )
+    if (-not $ForgeMgr.Data) { return }
+    
+    $actualApi = Get-GameApiVersion -GameInstallPath $GameInstallPath
+    if ([string]::IsNullOrWhiteSpace($actualApi)) {
+        Write-Host "  -> Не удалось получить актуальную версию API." -ForegroundColor Yellow
+        return
+    }
+
+    if (-not $ForgeMgr.Data.require) {
+        $ForgeMgr.Data | Add-Member -NotePropertyName "require" -NotePropertyValue ([PSCustomObject]@{}) -Force
+    }
+
+    $currentApi = $ForgeMgr.Data.require.api
+    if ($currentApi -ne $actualApi) {
+        Write-Host "  -> Update version: '$currentApi' -> '$actualApi'" -ForegroundColor DarkGray
+        $ForgeMgr.Data.require | Add-Member -NotePropertyName "api" -NotePropertyValue $actualApi -Force
+        $ForgeMgr.Save()
+    }
+}
+
 function New-ForgeJson {
     param(
         [ForgeContext]$Context,
@@ -85,35 +140,14 @@ function New-ForgeJson {
         $forgeData["require"] = [ordered]@{}
         
         Write-Host "    Определение 'api'..." -ForegroundColor DarkGray
-        $apiVersion = $null
-        $gameVersionFile = Join-Path $GameInstallPath "Profiles\game.version"
         
-        if (Test-Path $gameVersionFile) {
-            try {
-                $stream = [System.IO.File]::OpenRead($gameVersionFile)
-                $stream.Seek(8, [System.IO.SeekOrigin]::Begin) | Out-Null
-                $length = $stream.ReadByte()
-                $stream.Close()
-                
-                if ($length -gt 0) {
-                    $stream = [System.IO.File]::OpenRead($gameVersionFile)
-                    $stream.Seek(12, [System.IO.SeekOrigin]::Begin) | Out-Null
-                    $buffer = New-Object byte[] $length
-                    $bytesRead = $stream.Read($buffer, 0, $length)
-                    $stream.Close()
-                    
-                    if ($bytesRead -eq $length) {
-                        $apiVersion = [System.Text.Encoding]::ASCII.GetString($buffer)
-                        Write-Host "      -> Версия API найдена: $apiVersion" -ForegroundColor DarkGray
-                    }
-                }
-            } catch { Write-Host "      -> Ошибка чтения game.version." -ForegroundColor Yellow }
-        }
-        
+        $apiVersion = Get-GameApiVersion -GameInstallPath $GameInstallPath
         if ([string]::IsNullOrWhiteSpace($apiVersion)) {
             Write-Host "      -> Версия API не найдена." -ForegroundColor Yellow
             $apiVersion = Read-Host "      Введите версию API"
             if ([string]::IsNullOrWhiteSpace($apiVersion)) { $apiVersion = "18.0.0" }
+        } else {
+            Write-Host "      -> Версия API найдена: $apiVersion" -ForegroundColor DarkGray
         }
         $forgeData["require"]["api"] = $apiVersion
         Write-Host "      -> Установлена версия API: $apiVersion" -ForegroundColor Green

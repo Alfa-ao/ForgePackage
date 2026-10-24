@@ -31,6 +31,8 @@ function Install-PackageDependencies {
     
     $forgeMgr = [ForgeJsonManager]::new($Ctx.ForgeJsonPath)
     
+    Sync-ForgeApiVersion -ForgeMgr $forgeMgr -GameInstallPath $Ctx.GameInstallPath
+    
     if (-not $forgeMgr.Data -or -not $forgeMgr.Data.require) {
         Write-Host "  -> В forge.json отсутствует секция require." -ForegroundColor Yellow
         return
@@ -41,7 +43,7 @@ function Install-PackageDependencies {
     
     if (-not $downloader.PackagesData) {
         $downloader.PackagesData = [PSCustomObject]@{
-            version  = $Config.PackagesVersion # (HELP) в конфиг
+            version  = $Config.PackagesVersion
             packages = [array]@()
         }
     }
@@ -162,6 +164,9 @@ function Require-Package {
     param([string]$TargetTag, [ForgeContext]$Ctx)
     
     $forgeMgr = [ForgeJsonManager]::new($Ctx.ForgeJsonPath)
+    
+    Sync-ForgeApiVersion -ForgeMgr $forgeMgr -GameInstallPath $Ctx.GameInstallPath
+    
     $downloader = [PackageDownloader]::new($Ctx.PackagesJsonPath, $forgeMgr)
     $downloader.ResolveTrueCasing($TargetTag)
     $tag = "$($downloader.ResolvedOwner)/$($downloader.ResolvedRepo)"
@@ -212,6 +217,9 @@ function Remove-Package {
         [ForgeContext]$Ctx
     )
     $forgeMgr = [ForgeJsonManager]::new($Ctx.ForgeJsonPath)
+    
+    Sync-ForgeApiVersion -ForgeMgr $forgeMgr -GameInstallPath $Ctx.GameInstallPath
+    
     $downloader = [PackageDownloader]::new($Ctx.PackagesJsonPath, $forgeMgr)
     
     $downloader.ResolveTrueCasing($TargetTag)
@@ -290,6 +298,9 @@ function Update-SinglePackage {
     param([string]$TargetTag, [ForgeContext]$Ctx)
     
     $forgeMgr = [ForgeJsonManager]::new($Ctx.ForgeJsonPath)
+    
+    Sync-ForgeApiVersion -ForgeMgr $forgeMgr -GameInstallPath $Ctx.GameInstallPath
+    
     $downloader = [PackageDownloader]::new($Ctx.PackagesJsonPath, $forgeMgr)
     $downloader.ResolveTrueCasing($TargetTag)
     $tag = "$($downloader.ResolvedOwner)/$($downloader.ResolvedRepo)"
@@ -299,7 +310,7 @@ function Update-SinglePackage {
     $foundPkg = $downloader.FindPackage($tag)
     
     if (-not $foundPkg) {
-        Write-Host "Пакет не найден. Подключите через require $tag" -ForegroundColor Red
+        Write-Host "  -> Пакет не найден. Подключите через require $tag" -ForegroundColor Red
         return
     }
 
@@ -309,7 +320,7 @@ function Update-SinglePackage {
     if (-not $latestTag -or -not $latestSha) { return }
 
     if ($latestTag -eq $foundPkg.version.ToString().Trim() -and $foundPkg.sha -eq $latestSha) {
-        Write-Host "Последняя версия уже установлена." -ForegroundColor Yellow
+        Write-Host "  -> Последняя версия уже установлена." -ForegroundColor Yellow
         return
     }
 
