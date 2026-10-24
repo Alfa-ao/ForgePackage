@@ -237,7 +237,7 @@ while($true) {
         
         switch ($actionToPerform) {
             "install" {
-                Install-PackageDependencies -Ctx $context
+                Install-PackageDependencies -Ctx $context -Config $config
             }
             "remove" {
                 if ($actionArg -match "^[^/]+/[^/]+$") {

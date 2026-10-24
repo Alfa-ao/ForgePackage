@@ -14,6 +14,19 @@ class GithubApi {
             "Accept"     = "application/vnd.github.v3+json"
         }
     }
+    
+    [string]GetTagSha([string]$owner, [string]$repo, [string]$tag) {
+        $url = "$($this.ApiBase)/repos/$owner/$repo/git/refs/tags/$tag"
+        try {
+            $ref = Invoke-RestMethod -Uri $url -Headers $this.Headers -UseBasicParsing
+            if ($ref -and $ref.object -and $ref.object.sha) {
+                return $ref.object.sha
+            }
+        } catch {
+            Write-Host "Не удалось получить SHA для тега '$tag' репозитория '$owner/$repo'." -ForegroundColor Red
+        }
+        return $null
+    }
 
     [PSCustomObject]GetLatestRelease([string]$owner, [string]$repo) {
         $url = "$($this.ApiBase)/repos/$owner/$repo/releases/latest"

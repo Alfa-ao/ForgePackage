@@ -129,26 +129,30 @@ class PackageDownloader {
             foreach ($reqProp in $remoteForge.require.PSObject.Properties) {
                 $reqTag = $reqProp.Name
                 $reqVersion = $reqProp.Value
-                
                 if ($reqTag -in @('api', 'useCommonScripts')) { continue }
                 if ($reqTag -notmatch "^[^/]+/[^/]+$") { continue }
                 
                 Write-Host "  -> Found nested dependency: $reqTag [$reqVersion]" -ForegroundColor DarkYellow
                 
                 $existingNestedPkg = $this.FindPackage($reqTag)
-                if ($existingNestedPkg -and $existingNestedPkg.version.ToString().Trim() -eq $reqVersion.ToString().Trim()) {
-                    Write-Host "     -> Dependency already installed." -ForegroundColor DarkGray
+                $reqParts = $reqTag -split '/'
+                $reqSha = $this.Api.GetTagSha($reqParts[0], $reqParts[1], $reqVersion)
+
+                if ($existingNestedPkg -and 
+                    $existingNestedPkg.version.ToString().Trim() -eq $reqVersion.ToString().Trim() -and 
+                    $existingNestedPkg.sha -eq $reqSha) {
+                    Write-Host "     -> Dependency already installed (SHA match)." -ForegroundColor DarkGray
                     continue
                 }
-                
+
                 $nestedForge = $this.DownloadRemoteForge($reqTag, $reqVersion)
                 if (-not $nestedForge) {
                     Write-Host "     -> Failed to fetch nested dependency forge.json." -ForegroundColor Red
                     continue
                 }
-                
+
                 $this.DownloadFiles($reqTag, $nestedForge, $reqVersion)
-                $this.UpdatePackagesJson($nestedForge, $reqVersion)
+                $this.UpdatePackagesJson($nestedForge, $reqVersion, $reqSha)
                 
                 if ($this.MainForgeManager) {
                     $this.MainForgeManager.UpdateRequire($reqTag, $reqVersion)
@@ -158,7 +162,7 @@ class PackageDownloader {
         return "Packages/$owner/$dirName".Replace('\', '/')
     }
 
-    [void]UpdatePackagesJson([PSCustomObject]$remoteForge, [string]$newVersion) {
+    [void]UpdatePackagesJson([PSCustomObject]$remoteForge, [string]$newVersion, [string]$sha) {
         $tagValue = "$($remoteForge._owner)/$($remoteForge._repo)"
         if ($remoteForge.PSObject.Properties['_owner']) { $remoteForge.PSObject.Properties.Remove('_owner') }
         if ($remoteForge.PSObject.Properties['_repo'])  { $remoteForge.PSObject.Properties.Remove('_repo') }
@@ -168,24 +172,28 @@ class PackageDownloader {
         
         if ($remoteForge.PSObject.Properties['version']) { $remoteForge.version = $newVersion }
         else { $remoteForge | Add-Member -NotePropertyName "version" -NotePropertyValue $newVersion -Force }
+
+        # Обязательное добавление SHA
+        if ($remoteForge.PSObject.Properties['sha']) { $remoteForge.sha = $sha }
+        else { $remoteForge | Add-Member -NotePropertyName "sha" -NotePropertyValue $sha -Force }
         
         if ($remoteForge.PSObject.Properties['type']) { $remoteForge.type = "Library" }
         else { $remoteForge | Add-Member -NotePropertyName "type" -NotePropertyValue "Library" -Force }
-        
+
         if (-not $this.PackagesData) {
-            $this.PackagesData = [PSCustomObject]@{ version = "v1"; packages = [array]@() }
+            $this.PackagesData = [PSCustomObject]@{ version = "v2"; packages = [array]@() }
         }
         if (-not ($this.PackagesData.PSObject.Properties.Name -contains 'packages')) {
             $this.PackagesData | Add-Member -NotePropertyName "packages" -NotePropertyValue ([array]@()) -Force
         }
-        
+
         $list = [System.Collections.ArrayList]::new()
         $current = $this.PackagesData.packages
         if ($null -ne $current) {
             if ($current -is [array]) { [void]$list.AddRange([object[]]$current) }
             else { [void]$list.Add($current) }
         }
-        
+
         $foundIndex = -1
         for ($i = 0; $i -lt $list.Count; $i++) {
             $currentTag = $list[$i].tag
@@ -194,7 +202,7 @@ class PackageDownloader {
                 break
             }
         }
-        
+
         if ($foundIndex -ge 0) { $list[$foundIndex] = $remoteForge }
         else { [void]$list.Add($remoteForge) }
         

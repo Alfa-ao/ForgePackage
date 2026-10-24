@@ -27,10 +27,10 @@ function Get-PackageFilePaths {
 }
 
 function Install-PackageDependencies {
-    param(
-        [ForgeContext]$Ctx
-    )
+    param( [ForgeContext]$Ctx, [ForgeConfig]$Config )
+    
     $forgeMgr = [ForgeJsonManager]::new($Ctx.ForgeJsonPath)
+    
     if (-not $forgeMgr.Data -or -not $forgeMgr.Data.require) {
         Write-Host "  -> В forge.json отсутствует секция require." -ForegroundColor Yellow
         return
@@ -41,7 +41,7 @@ function Install-PackageDependencies {
     
     if (-not $downloader.PackagesData) {
         $downloader.PackagesData = [PSCustomObject]@{
-            version  = "v1"
+            version  = $Config.PackagesVersion # (HELP) в конфиг
             packages = [array]@()
         }
     }
@@ -63,10 +63,16 @@ function Install-PackageDependencies {
         Write-Host "  -> Check: $tagName [$reqVersion]" -ForegroundColor DarkGray
         $downloader.ResolveTrueCasing($tagName)
         $resolvedTag = "$($downloader.ResolvedOwner)/$($downloader.ResolvedRepo)"
-
+        
+        # Получение актуального SHA для версии
+        $reqSha = $downloader.Api.GetTagSha($downloader.ResolvedOwner, $downloader.ResolvedRepo, $reqVersion)
         $existingPkg = $downloader.FindPackage($resolvedTag)
-        if ($existingPkg -and $existingPkg.version.ToString().Trim() -eq $reqVersion.ToString().Trim()) {
-            Write-Host "     -> Уже установлен (версия совпадает)." -ForegroundColor DarkGray
+
+        # Проверка совпадения версии и SHA
+        if ($existingPkg -and 
+            $existingPkg.version.ToString().Trim() -eq $reqVersion.ToString().Trim() -and 
+            $existingPkg.sha -eq $reqSha) {
+            Write-Host "     -> Уже установлен (версия и SHA совпадают)." -ForegroundColor DarkGray
             $skippedCount++
             continue
         }
@@ -123,7 +129,7 @@ function Install-PackageDependencies {
             continue
         }
 
-        $downloader.UpdatePackagesJson($remoteForge, $reqVersion)
+        $downloader.UpdatePackagesJson($remoteForge, $reqVersion, $reqSha)
         $forgeMgr.UpdateRequire($resolvedTag, $reqVersion)
         $installedCount++
         Write-Host "     -> Успешно установлено $tagName [$reqVersion]" -ForegroundColor Yellow
@@ -153,16 +159,13 @@ function Install-PackageDependencies {
 }
 
 function Require-Package {
-    param(
-        [string]$TargetTag,
-        [ForgeContext]$Ctx
-    )
+    param([string]$TargetTag, [ForgeContext]$Ctx)
+    
     $forgeMgr = [ForgeJsonManager]::new($Ctx.ForgeJsonPath)
     $downloader = [PackageDownloader]::new($Ctx.PackagesJsonPath, $forgeMgr)
-    
     $downloader.ResolveTrueCasing($TargetTag)
     $tag = "$($downloader.ResolvedOwner)/$($downloader.ResolvedRepo)"
-
+    
     $existingPkg = $downloader.FindPackage($tag)
     if ($null -ne $existingPkg) {
         Write-Host "  Пакет $tag уже подключен (версия $($existingPkg.version))." -ForegroundColor Yellow
@@ -171,10 +174,12 @@ function Require-Package {
     }
 
     Write-Host "Connection: $tag" -ForegroundColor DarkGray
+    $xdbMgr = [XdbManager]::new($Ctx.XdbPath)
     
-    $xdbMgr   = [XdbManager]::new($Ctx.XdbPath)
     $latestTag = $downloader.GetLatestTag($tag)
-    if (-not $latestTag) { return }
+    $latestSha = $downloader.Api.GetTagSha($downloader.ResolvedOwner, $downloader.ResolvedRepo, $latestTag)
+    
+    if (-not $latestTag -or -not $latestSha) { return }
 
     $remoteForge = $downloader.DownloadRemoteForge($tag, $latestTag)
     if (-not $remoteForge) { return }
@@ -184,21 +189,20 @@ function Require-Package {
         return
     }
 
-    $downloader.UpdatePackagesJson($remoteForge, $latestTag)
+    $downloader.UpdatePackagesJson($remoteForge, $latestTag, $latestSha)
     
     $pkgMgr = [ForgeJsonManager]::new($Ctx.PackagesJsonPath)
     $pkgMgr.Data = $downloader.PackagesData
     $pkgMgr.Save()
     Write-Host "  -> packages.json updated." -ForegroundColor DarkGray
-
+    
     $forgeMgr.UpdateRequire($tag, $latestTag)
     $forgeMgr.Save()
     Write-Host "  -> forge.json updated." -ForegroundColor DarkGray
-
+    
     $xdbMgr.ApplyForgeChanges($forgeMgr.Data, $downloader.PackagesData)
     $xdbMgr.Save()
     Write-Host "  -> AddonDesc.(UIAddon).xdb updated." -ForegroundColor DarkGray
-
     Write-Log "Success" "$tag [$latestTag] required." "Green" "Gray"
 }
 
@@ -283,30 +287,28 @@ function Remove-Package {
 }
 
 function Update-SinglePackage {
-    param(
-        [string]$TargetTag,
-        [ForgeContext]$Ctx
-    )
+    param([string]$TargetTag, [ForgeContext]$Ctx)
+    
     $forgeMgr = [ForgeJsonManager]::new($Ctx.ForgeJsonPath)
     $downloader = [PackageDownloader]::new($Ctx.PackagesJsonPath, $forgeMgr)
-    
     $downloader.ResolveTrueCasing($TargetTag)
     $tag = "$($downloader.ResolvedOwner)/$($downloader.ResolvedRepo)"
-
-    Write-Log "Update" $tag "Green" "Gray"
-
-    $xdbMgr   = [XdbManager]::new($Ctx.XdbPath)
     
+    Write-Log "Update" $tag "Green" "Gray"
+    $xdbMgr = [XdbManager]::new($Ctx.XdbPath)
     $foundPkg = $downloader.FindPackage($tag)
+    
     if (-not $foundPkg) {
         Write-Host "Пакет не найден. Подключите через require $tag" -ForegroundColor Red
         return
     }
 
     $latestTag = $downloader.GetLatestTag($tag)
-    if (-not $latestTag) { return }
+    $latestSha = $downloader.Api.GetTagSha($downloader.ResolvedOwner, $downloader.ResolvedRepo, $latestTag)
+    
+    if (-not $latestTag -or -not $latestSha) { return }
 
-    if ($latestTag -eq $foundPkg.version.ToString().Trim()) {
+    if ($latestTag -eq $foundPkg.version.ToString().Trim() -and $foundPkg.sha -eq $latestSha) {
         Write-Host "Последняя версия уже установлена." -ForegroundColor Yellow
         return
     }
@@ -357,7 +359,7 @@ function Update-SinglePackage {
     }
 
     $downloader.DownloadFiles($tag, $remoteForge, $latestTag)
-    $downloader.UpdatePackagesJson($remoteForge, $latestTag)
+    $downloader.UpdatePackagesJson($remoteForge, $latestTag, $latestSha)
 
     $pkgMgr = [ForgeJsonManager]::new($Ctx.PackagesJsonPath)
     $pkgMgr.Data = $downloader.PackagesData
